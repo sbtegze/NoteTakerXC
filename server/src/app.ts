@@ -3,6 +3,13 @@ import rateLimit from '@fastify/rate-limit';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { login, logout, SESSION_COOKIE, SESSION_DAYS, userForToken, type User } from './auth.js';
 import type { Db } from './db.js';
+import { createNode, HttpError, updateNode, type CreateNodeInput } from './nodes.js';
+
+function optionalString(value: unknown, name: string): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string') throw new HttpError(400, `Hibás mező: ${name}`);
+  return value;
+}
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -59,6 +66,39 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
   });
 
   app.get('/api/me', async (req) => ({ user: req.user }));
+
+  app.setErrorHandler((err: Error & { statusCode?: number; code?: string }, _req, reply) => {
+    if (err instanceof HttpError) return reply.code(err.status).send({ error: err.message });
+    // Hibás formátumú azonosító (nem UUID) az adatbázisból
+    if (err.code === '22P02') return reply.code(400).send({ error: 'Érvénytelen azonosító' });
+    if (err.statusCode && err.statusCode < 500) return reply.code(err.statusCode).send({ error: err.message });
+    app.log.error(err);
+    return reply.code(500).send({ error: 'Szerverhiba' });
+  });
+
+  app.post<{ Body: CreateNodeInput }>('/api/nodes', async (req, reply) => {
+    const b = req.body ?? ({} as CreateNodeInput);
+    if (typeof b.content !== 'string') throw new HttpError(400, 'A szöveg kötelező');
+    const result = await createNode(db, req.user.id, {
+      content: b.content,
+      parentId: optionalString(b.parentId, 'parentId'),
+      contextId: optionalString(b.contextId, 'contextId'),
+      type: optionalString(b.type, 'type'),
+      aliases: Array.isArray(b.aliases) ? b.aliases.filter((a) => typeof a === 'string') : undefined,
+    });
+    return reply.code(201).send(result);
+  });
+
+  app.patch<{ Params: { id: string }; Body: { content?: string; version?: number } }>(
+    '/api/nodes/:id',
+    async (req) => {
+      const { content, version } = req.body ?? {};
+      if (typeof content !== 'string' || !Number.isInteger(version)) {
+        throw new HttpError(400, 'A szöveg és a verzió kötelező');
+      }
+      return updateNode(db, req.user.id, req.params.id, { content, version: version as number });
+    },
+  );
 
   return app;
 }
