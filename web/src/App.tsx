@@ -33,6 +33,17 @@ function save(storage: () => Storage, key: string, value: unknown) {
   }
 }
 
+// Az URL a középen álló node-ot adja meg (/n/<azonosító>); az útvonalat a böngésző előzményei őrzik,
+// így a vissza/előre gomb és az újratöltés is ugyanoda visz.
+const urlFor = (path: Crumb[]) => (path.length ? `/n/${path.at(-1)!.id}` : '/');
+const idFromUrl = () => /^\/n\/([^/]+)$/.exec(location.pathname)?.[1];
+function pathFromHistory(): Crumb[] {
+  const id = idFromUrl();
+  const saved = (history.state as { path?: Crumb[] } | null)?.path;
+  if (saved && saved.at(-1)?.id === id) return saved;
+  return id ? [{ id, title: '' }] : []; // a nevet a betöltés pótolja
+}
+
 const fmtDay = (iso: string) =>
   new Date(`${iso}T00:00:00`).toLocaleDateString('hu-HU', { month: 'short', day: 'numeric', weekday: 'short' });
 const fmtRange = (from: string, to: string) => (from === to ? fmtDay(from) : `${fmtDay(from)} – ${fmtDay(to)}`);
@@ -97,15 +108,27 @@ function Login({ onLogin }: { onLogin: (u: User) => void }) {
 }
 
 function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
-  const [path, setPath] = useState<Crumb[]>(() => load(() => sessionStorage, 'path', []));
+  const [path, setPath] = useState<Crumb[]>(pathFromHistory);
   const [view, setView] = useState<View | null>(null);
   const [error, setError] = useState('');
   const [context, setContext] = useState<Crumb | null>(() => load(() => localStorage, 'context', null));
   const currentId = path.at(-1)?.id;
   const captureRef = useRef<HTMLTextAreaElement>(null);
 
-  useEffect(() => save(() => sessionStorage, 'path', path), [path]);
   useEffect(() => save(() => localStorage, 'context', context), [context]);
+
+  // Az aktuális előzménybejegyzés mindig a friss útvonalat tárolja (pl. átnevezés vagy törölt node után).
+  useEffect(() => {
+    history.replaceState({ path }, '', urlFor(path));
+    const name = path.at(-1)?.title;
+    document.title = name ? `${name} – NoteTakerXC` : 'NoteTakerXC';
+  }, [path]);
+
+  useEffect(() => {
+    const onPop = () => setPath(pathFromHistory());
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
 
   const fail = useCallback(
     (err: unknown) => {
@@ -115,13 +138,17 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
     [onLogout],
   );
 
-  /** Középre állítás: ha a node már szerepel az útvonalon, oda lépünk vissza. */
-  const go = useCallback((node: { id: string; content: string }) => {
-    setPath((p) => {
-      const at = p.findIndex((c) => c.id === node.id);
-      return at >= 0 ? p.slice(0, at + 1) : [...p, { id: node.id, title: title(node) }];
-    });
-  }, []);
+  /** Középre állítás: ha a node már szerepel az útvonalon, oda lépünk vissza. Új előzménybejegyzést kap. */
+  const go = useCallback(
+    (node: { id: string; content: string }) => {
+      if (node.id === path.at(-1)?.id) return;
+      const at = path.findIndex((c) => c.id === node.id);
+      const next = at >= 0 ? path.slice(0, at + 1) : [...path, { id: node.id, title: title(node) }];
+      history.pushState({ path: next }, '', urlFor(next));
+      setPath(next);
+    },
+    [path],
+  );
 
   const reload = useCallback(
     async (id: string) => {
