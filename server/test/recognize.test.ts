@@ -57,6 +57,41 @@ describe('név', () => {
   });
 });
 
+describe('@név', () => {
+  const tagged = (text: string) =>
+    run(text).map((s) => (s.kind === 'person' ? [s.text, s.personId ?? `új:${s.newName}`] : [s.text, s.kind]));
+
+  it('az ismert embert ragozva és kisbetűvel is felismeri, a @ is a kiemelés része', () => {
+    expect(tagged('@Szabinak szóltam, @istvánnal egyeztet')).toEqual([
+      ['@Szabinak', 'szabi'],
+      ['@istvánnal', 'istvan'],
+    ]);
+  });
+
+  it('ismeretlen névnél az alapalakot adja, ebből lesz az új ember', () => {
+    expect(tagged('@Annának @Péterrel @Zoltán @Kornél @Bálint @dénesről')).toEqual([
+      ['@Annának', 'új:Anna'],
+      ['@Péterrel', 'új:Péter'],
+      ['@Zoltán', 'új:Zoltán'],
+      ['@Kornél', 'új:Kornél'],
+      ['@Bálint', 'új:Bálint'],
+      ['@dénesről', 'új:Dénes'],
+    ]);
+  });
+
+  it('az e-mail cím nem név, és a @ nélküli felismerés is megmarad', () => {
+    expect(tagged('írj a teszt@szabi.hu címre, Szabi tudja')).toEqual([['Szabi', 'szabi']]);
+  });
+
+  it('ha két emberre is illik, nem dönt és nem is hoz létre újat', () => {
+    const spans = recognize('@Péter jön', {
+      today,
+      people: [{ id: 'a', names: ['Péter'] }, { id: 'b', names: ['Péter'] }],
+    });
+    expect(spans).toEqual([]);
+  });
+});
+
 describe('dátum', () => {
   it('évvel és év nélkül', () => {
     expect(one('2026-11-20')).toEqual(['2026-11-20']);

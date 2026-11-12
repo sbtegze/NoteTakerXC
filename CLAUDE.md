@@ -23,6 +23,9 @@ Ez a hét kérdés az MVP mércéje: valódi meetingek után mindegyikre legfelj
 - **Jegyszám:** `#1234`. A `#` nélküli szám csak akkor jegy, ha már létezik ilyen jegy node. Azure DevOps
   integráció nem kell.
 - **Név:** csak nagybetűs szó lehet név (a kisbetűs „szabi” szabadságot jelent). Ragozott alakot is felismer.
+  A `@név` mindig név (kisbetűvel is); ha még nincs ilyen ember, létrehozza, mint a `#1234` a jegyet. Ismeretlen
+  névnél csak a hosszabb ragot vágja le (`@Gézának` → Géza), a rövidet (-t, -n, -ra, -nál) nem, mert az gyakran
+  a név része (Bálint, Zoltán, Klára, Kornél). A kommentben a `@név` sem hoz létre embert.
 - **Dátum:** év nélkül a rögzítés napjához legközelebbi előfordulás. A relatív dátum a node `created_at` napjához
   képest értendő.
 - **Tag = node:** nincs külön tag vagy csoport; az ember, a jegy, a meeting is node, `type` mezővel.

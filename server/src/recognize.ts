@@ -15,7 +15,8 @@ interface Base {
   text: string;
 }
 export type TicketSpan = Base & { kind: 'ticket'; ticketNo: number };
-export type PersonSpan = Base & { kind: 'person'; personId: string };
+/** Ismert embernél personId; a még nem létező @névnél newName (az alapalak, ebből lesz az új ember). */
+export type PersonSpan = Base & { kind: 'person'; personId?: string; newName?: string };
 /** from és to: YYYY-MM-DD; egyetlen napnál megegyeznek. */
 export type DateSpan = Base & { kind: 'date'; from: string; to: string };
 export type Span = TicketSpan | PersonSpan | DateSpan;
@@ -183,6 +184,35 @@ export function matchesName(word: string, name: string): boolean {
   return false;
 }
 
+// Ismeretlen névnél csak a hosszabb ragokat vágjuk le: a rövidek (-t, -n, -ra) és a -nál/-nél
+// gyakran a név része (Bálint, Zoltán, Klára, Kornél).
+const LONG_SUFFIXES = ['nak', 'nek', 'val', 'vel', 'tól', 'től', 'ról', 'ről', 'hoz', 'hez', 'höz', 'ból', 'ből', 'ért', 'ként'];
+
+/** A @-os, még ismeretlen név alapalakja: @Gézának -> Géza, @Istvánnal -> István, @Zoltán -> Zoltán. */
+export function baseName(word: string): string {
+  const lower = word.toLowerCase();
+  let stem = word;
+  const suffix = LONG_SUFFIXES.find((s) => lower.endsWith(s) && lower.length - s.length >= 3);
+  if (suffix) stem = word.slice(0, -suffix.length);
+  else if (lower.length >= 6 && /(\p{L})\1[ae]l$/u.test(lower)) stem = word.slice(0, -3); // Istvánnal, Péterrel
+  if (stem !== word) stem = stem.replace(/á$/, 'a').replace(/é$/, 'e'); // Gézá-nak -> Géza
+  return stem[0]!.toUpperCase() + stem.slice(1);
+}
+
+/** @név: kis- és nagybetűvel is név; ha még nincs ilyen ember, új jön létre. Az e-mail cím nem az. */
+function findTaggedPeople(text: string, people: Person[]): PersonSpan[] {
+  const spans: PersonSpan[] = [];
+  for (const m of text.matchAll(/(?<![\p{L}\d])@(\p{L}+)/gu)) {
+    const word = m[1]!;
+    const base = { kind: 'person' as const, start: m.index!, end: m.index! + m[0].length, text: m[0] };
+    const hits = people.filter((p) => p.names.some((n) => matchesName(word, n)));
+    if (hits.length === 1) spans.push({ ...base, personId: hits[0]!.id });
+    else if (hits.length === 0) spans.push({ ...base, newName: baseName(word) });
+    // Ha több emberre is illik, nem találgatunk.
+  }
+  return spans;
+}
+
 function findPeople(text: string, people: Person[]): PersonSpan[] {
   const spans: PersonSpan[] = [];
   for (const m of text.matchAll(/\p{L}+/gu)) {
@@ -207,6 +237,7 @@ export function recognize(text: string, opts: RecognizeOptions): Span[] {
   for (const m of text.matchAll(/#(\d{1,7})(?!\d)/g)) {
     spans.push({ kind: 'ticket', start: m.index!, end: m.index! + m[0].length, text: m[0], ticketNo: +m[1]! });
   }
+  spans.push(...findTaggedPeople(text, opts.people ?? []));
   for (const d of findDates(text, opts.today)) {
     if (!overlaps(d.start, d.end)) spans.push({ kind: 'date', text: text.slice(d.start, d.end), ...d });
   }

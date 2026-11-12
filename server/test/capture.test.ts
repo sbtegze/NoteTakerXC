@@ -138,6 +138,35 @@ describe('rögzítés', () => {
     expect((await patch('00000000-0000-4000-8000-000000000000', { content: 'x', version: 1 })).statusCode).toBe(404);
   });
 
+  it('az ismeretlen @név új embert hoz létre, egyszer, és a korábbi szövegekben is felismeri', async () => {
+    const earlier = await create({ content: 'Gézától kérdezd meg' });
+    expect(await edgesFrom(earlier.id)).toEqual([]);
+
+    const res = await post({ content: '@Gézának szólni kell, @Gézát is hívd' });
+    const { node, spans } = res.json();
+    expect(spans.map((s: { text: string }) => s.text)).toEqual(['@Gézának', '@Gézát']);
+    const people = await db.query(`SELECT content FROM nodes WHERE type = 'person' AND content LIKE 'Géz%'`);
+    expect(people.rows).toEqual([{ content: 'Géza' }]);
+    expect(await edgesFrom(node.id)).toEqual(['mention:Géza']);
+    expect(await edgesFrom(earlier.id)).toEqual(['mention:Géza']);
+
+    // Később már @ nélkül is.
+    const later = await create({ content: 'Géza ráér' });
+    expect(await edgesFrom(later.id)).toEqual(['mention:Géza']);
+  });
+
+  it('szerkesztéskor is létrejön az új @-os ember', async () => {
+    const node = await create({ content: 'meg kell kérdezni' });
+    await patch(node.id, { content: 'meg kell kérdezni @Hannától', version: node.version });
+    expect(await edgesFrom(node.id)).toEqual(['mention:Hanna']);
+  });
+
+  it('a kommentben a @név nem hoz létre embert', async () => {
+    const node = await create({ content: 'kommentelt' });
+    await app.inject({ method: 'POST', url: `/api/nodes/${node.id}/notes`, payload: { content: '@Ottó tudja' }, cookies });
+    expect((await db.query(`SELECT 1 FROM nodes WHERE content = 'Ottó'`)).rowCount).toBe(0);
+  });
+
   it('sikertelen rögzítés után nem marad félkész adat', async () => {
     const before = (await db.query('SELECT count(*)::int AS n FROM nodes')).rows[0].n;
     await post({ content: 'árva #9999', parentId: '00000000-0000-4000-8000-000000000000' });

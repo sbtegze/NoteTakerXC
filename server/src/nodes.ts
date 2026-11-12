@@ -97,7 +97,7 @@ async function applyRecognition(tx: Tx, userId: string, node: NodeRow, ctx: Reco
   const spans = spansOf(node, ctx);
   const targets = new Set<string>();
   for (const s of spans) {
-    if (s.kind === 'person') targets.add(s.personId);
+    if (s.kind === 'person' && s.personId) targets.add(s.personId);
     if (s.kind === 'ticket') {
       s.targetId = await ticketNode(tx, userId, s.ticketNo, ctx);
       targets.add(s.targetId);
@@ -140,6 +140,26 @@ async function applyRecognition(tx: Tx, userId: string, node: NodeRow, ctx: Reco
     }
   }
   return spans;
+}
+
+/**
+ * A @-tal említett, még nem létező embereket létrehozza. Egyenként, a legrövidebb alapalakkal kezdve,
+ * hogy a „@Gézának … @Gézát” egy embert adjon. Igazat ad, ha jött létre új.
+ */
+async function createTaggedPeople(tx: Tx, userId: string, node: NodeRow, ctx: RecognitionContext): Promise<boolean> {
+  const created = new Set<string>();
+  for (;;) {
+    const names = spansOf(node, ctx).flatMap((s) => (s.kind === 'person' && s.newName ? [s.newName] : []));
+    if (!names.length) return created.size > 0;
+    const name = names.reduce((a, b) => (b.length < a.length ? b : a));
+    if (created.has(name)) return true; // nem fordulhat elő: a létrehozott név illik a szóra
+    const { rows } = await tx.query(
+      `INSERT INTO nodes (content, type, created_by, updated_by) VALUES ($1, 'person', $2, $2) RETURNING id`,
+      [name, userId],
+    );
+    ctx.people.push({ id: rows[0].id, names: [name] });
+    created.add(name);
+  }
 }
 
 /** Ha változott az emberek köre vagy neve, minden szöveg említéseit újraszámoljuk. */
@@ -193,7 +213,8 @@ export function createNode(db: Db, userId: string, input: CreateNodeInput) {
         userId,
       ]);
     }
-    if (node.type === 'person') await reindexAll(tx, userId);
+    const createdPeople = await createTaggedPeople(tx, userId, node, await loadContext(tx));
+    if (node.type === 'person' || createdPeople) await reindexAll(tx, userId);
     return { node, spans: await applyRecognition(tx, userId, node, await loadContext(tx)) };
   });
 }
@@ -224,7 +245,8 @@ export function updateNode(db: Db, userId: string, id: string, input: UpdateNode
     );
     const node: NodeRow | undefined = rows[0];
     if (!node) throw new HttpError(409, 'A node közben megváltozott');
-    if (node.type === 'person' || before.rows[0].type === 'person') await reindexAll(tx, userId);
+    const createdPeople = await createTaggedPeople(tx, userId, node, await loadContext(tx));
+    if (node.type === 'person' || before.rows[0].type === 'person' || createdPeople) await reindexAll(tx, userId);
     return { node, spans: await applyRecognition(tx, userId, node, await loadContext(tx)) };
   });
 }
