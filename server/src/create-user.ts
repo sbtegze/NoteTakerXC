@@ -39,13 +39,36 @@ async function ask(question: string, hidden = false): Promise<string> {
   return answer.trim();
 }
 
+/** Megmutatja, mit olvastunk ki a DATABASE_URL-ből – a jelszót magát nem, csak a hosszát. */
+function describeUrl(): string {
+  const raw = process.env.DATABASE_URL ?? '';
+  try {
+    const url = new URL(raw);
+    const password = decodeURIComponent(url.password);
+    const hints: string[] = [];
+    if (!password) hints.push('a sorban nincs jelszó');
+    if (password === 'JELSZO') hints.push('a jelszó helyén még a minta (JELSZO) áll');
+    if (/^["']|["']$/.test(raw)) hints.push('a sor idézőjelek között van, ezeket töröld');
+    if (/\s/.test(raw)) hints.push('a sorban szóköz van');
+    if (!url.pathname.slice(1)) hints.push('hiányzik az adatbázis neve – a jelszóban lévő # / ? jelet kódolni kell');
+    return (
+      `A .env fájlból ezt olvastam ki: felhasználó "${decodeURIComponent(url.username)}", ` +
+      `jelszó ${password.length} karakter, gép "${url.hostname}", port ${url.port || '5432'}, ` +
+      `adatbázis "${url.pathname.slice(1)}".` +
+      (hints.length ? ` Gyanús: ${hints.join('; ')}.` : ' Ha a jelszó hossza nem stimmel, a különleges karaktereket kódolni kell.')
+    );
+  } catch {
+    return 'A DATABASE_URL nem érvényes URL; a jelszó különleges karaktereit (@ : / # ? %) kódolni kell.';
+  }
+}
+
 function explain(err: unknown): string {
   const e = err as { code?: string; message?: string };
   if (e.message?.includes('DATABASE_URL')) {
     return 'A DATABASE_URL nincs beállítva. Másold a .env.example fájlt .env néven a repó gyökerébe, és írd át.';
   }
   if (e.code === 'ECONNREFUSED') return 'Az adatbázis nem érhető el. Fut a PostgreSQL, és jó a gép meg a port a DATABASE_URL-ben?';
-  if (e.code === '28P01') return 'Az adatbázis elutasította a jelszót. Ellenőrizd a DATABASE_URL-t (a különleges karaktereket kódolni kell).';
+  if (e.code === '28P01') return `Az adatbázis elutasította a jelszót. ${describeUrl()}`;
   if (e.code === '3D000') return 'A DATABASE_URL-ben megadott adatbázis nem létezik.';
   if (e.code === '42501') return 'Az adatbázis-felhasználónak nincs joga táblákat létrehozni. Legyen ő az adatbázis tulajdonosa.';
   if (e.code === 'ERR_INVALID_URL') return 'A DATABASE_URL nem érvényes. A jelszó különleges karaktereit (@ : / # ? %) kódolni kell.';
