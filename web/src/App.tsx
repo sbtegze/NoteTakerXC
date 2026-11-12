@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { api, ApiError, INBOX_SYMBOL, title, type Brief, type Detailed, type Entry, type Note, type NodeType, type Span, type User, type View } from './api';
+import { api, ApiError, title, type Brief, type Detailed, type Entry, type Note, type NodeType, type Span, type User, type View } from './api';
 
 interface Crumb {
   id: string;
@@ -167,15 +167,14 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
   );
 
   useEffect(() => {
-    if (currentId) {
-      void reload(currentId);
-    } else {
-      api
-        .home()
-        .then(({ id }) => setPath([{ id, title: INBOX_SYMBOL }]))
-        .catch(fail);
-    }
-  }, [currentId, reload, fail]);
+    if (currentId) void reload(currentId); // üres útvonal: a kezdőlap a saját listáját tölti be
+  }, [currentId, reload]);
+
+  const goHome = () => {
+    if (!path.length) return;
+    history.pushState({ path: [] }, '', '/');
+    setPath([]);
+  };
 
   useEffect(() => {
     // Középre állítás után rögtön lehet írni – de ha a felhasználó épp máshol gépel (pl. a keresőben), nem vesszük el a fókuszt.
@@ -195,9 +194,12 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
     <div className="app">
       <header className="topbar">
         <nav className="path" aria-label="Útvonal">
+          <button className={path.length ? 'crumb home' : 'crumb home current'} onClick={goHome} title="Kezdőlap" aria-label="Kezdőlap">
+            ⌂
+          </button>
           {path.map((c, i) => (
             <span key={c.id}>
-              {i > 0 && <span className="sep">›</span>}
+              <span className="sep">›</span>
               <button className={i === path.length - 1 ? 'crumb current' : 'crumb'} onClick={() => go({ id: c.id, content: c.title })}>
                 {c.title}
               </button>
@@ -229,11 +231,13 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
       )}
       {error && <p className="error banner">{error}</p>}
 
-      {ready ? (
+      {!currentId ? (
+        <Home onPick={go} onError={fail} />
+      ) : ready ? (
         <main className="map" key={view.center.id}>
           <aside className="side">
             <h2>Ide tartozik</h2>
-            {view.parents.length ? <Ancestors view={view} onPick={go} /> : <p className="empty">Nincs szülője</p>}
+            {view.parents.length ? <Ancestors view={view} onPick={go} /> : <p className="empty">Legfelső szintű</p>}
           </aside>
 
           <section className="middle">
@@ -247,7 +251,7 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
               onError={fail}
               onPick={go}
               onDeleted={(parentId) => {
-                // A törölt node kikerül az útvonalból, a szülője áll középre.
+                // A törölt node kikerül az útvonalból, a szülője áll középre (legfelső szintűnél a kezdőlap).
                 const parent = view.parents.find((p) => p.id === parentId);
                 setPath((p) => {
                   const rest = p.filter((c) => c.id !== view.center.id);
@@ -282,6 +286,55 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
   );
 }
 
+/** Kezdőlap: a legfelső szintű node-ok, a legújabb elöl; fent a mező egy újabb legfelső szintű node-hoz. */
+function Home({ onPick, onError }: { onPick: (n: Brief) => void; onError: (e: unknown) => void }) {
+  const [roots, setRoots] = useState<(Brief & { created_at: string })[] | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const refresh = useCallback(
+    () =>
+      api
+        .roots()
+        .then((r) => setRoots(r.roots))
+        .catch(onError),
+    [onError],
+  );
+  useEffect(() => {
+    void refresh();
+    inputRef.current?.focus();
+  }, [refresh]);
+
+  return (
+    <main className="home-page">
+      <Capture
+        inputRef={inputRef}
+        target="legfelső szint"
+        onSave={async (content) => {
+          await api.create({ content });
+          await refresh();
+        }}
+        onError={onError}
+      />
+      <section className="entries">
+        <h2>
+          Legfelső szint <span className="count">{roots?.length}</span>
+        </h2>
+        {roots?.length === 0 && <p className="empty">Még nincs semmi. Írj egyet a fenti mezőbe.</p>}
+        <ul>
+          {roots?.map((r) => (
+            <li key={r.id} className="entry clickable" onClick={() => onPick(r)}>
+              <div className="entry-head">
+                <time dateTime={r.created_at}>{fmtStamp(r.created_at)}</time>
+                {r.type && <span className={`tag type-${r.type}`}>{TYPE_LABEL[r.type]}</span>}
+              </div>
+              <p className="entry-text">{title(r)}</p>
+            </li>
+          ))}
+        </ul>
+      </section>
+    </main>
+  );
+}
+
 function Chips({ nodes, onPick, counts }: { nodes: (Brief & { mentions?: number })[]; onPick: (n: Brief) => void; counts?: boolean }) {
   return (
     <ul className="chips">
@@ -300,11 +353,13 @@ function Chips({ nodes, onPick, counts }: { nodes: (Brief & { mentions?: number 
 /** Kuka ikon: megerősítés után végleges törlés. Csak a törölhető node-on jelenik meg. */
 function DeleteButton(props: {
   node: Detailed;
-  onDeleted: (parentId: string) => void;
+  onDeleted: (parentId: string | null) => void;
   onError: (err: unknown) => Promise<void>;
 }) {
   const { node } = props;
+  const inactive = !node.deletable;
   const remove = async () => {
+    if (inactive) return;
     if (!window.confirm(`Végleg törlöd ezt a node-ot?\n\n„${title(node)}”\n\nVisszaállítani nem lehet.`)) return;
     try {
       const { parentId } = await api.deleteNode(node.id, node.version);
@@ -314,7 +369,18 @@ function DeleteButton(props: {
     }
   };
   return (
-    <button className="link icon" onClick={() => void remove()} title="Végleges törlés" aria-label="Törlés">
+    // aria-disabled, nem disabled: így a súgó rámutatáskor is megjelenik.
+    <button
+      className="link icon"
+      onClick={() => void remove()}
+      aria-disabled={inactive}
+      aria-label="Törlés"
+      title={
+        inactive
+          ? 'Nem törölhető: csak az a node törölhető, amelynek egyetlen kapcsolata a szülője felé mutat, és nincs kommentje.'
+          : 'Végleges törlés'
+      }
+    >
       <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6" />
       </svg>
@@ -373,7 +439,7 @@ function RichText({ node, onPick, nodes }: { node: { content: string; spans: Spa
           title={target ? title(target) : undefined}
           onClick={(e) => {
             e.stopPropagation();
-            onPick(target ?? { id: s.targetId!, content: text, type: null, ticket_no: null, is_inbox: false });
+            onPick(target ?? { id: s.targetId!, content: text, type: null, ticket_no: null });
           }}
         >
           {text}
@@ -428,7 +494,7 @@ function Center(props: {
   onChanged: () => Promise<void>;
   onError: (e: unknown) => void;
   onPick: (n: Brief) => void;
-  onDeleted: (parentId: string) => void;
+  onDeleted: (parentId: string | null) => void;
 }) {
   const { node, onChanged, onError } = props;
   const [editing, setEditing] = useState(false);
@@ -454,16 +520,12 @@ function Center(props: {
         <Editor initial={node.content} onSave={(content) => update({ content })} onCancel={() => setEditing(false)} />
       ) : (
         <>
-          <h1 title={node.is_inbox ? 'Bejövő' : undefined}>
-            {node.is_inbox ? (
-              INBOX_SYMBOL
-            ) : (
-              <RichText
-                node={{ content: first, spans: node.spans.filter((s) => s.end <= first.length) }}
-                onPick={props.onPick}
-                nodes={props.nodes}
-              />
-            )}
+          <h1>
+            <RichText
+              node={{ content: first, spans: node.spans.filter((s) => s.end <= first.length) }}
+              onPick={props.onPick}
+              nodes={props.nodes}
+            />
           </h1>
           {body && (
             <p className="body">
@@ -481,81 +543,72 @@ function Center(props: {
           ))}
         </p>
       )}
-      {/* A Bejövőnek nincs neve, típusa, és nem szerkeszthető: nincs műveletsora. */}
-      {!node.is_inbox && (
-        <div className="row meta">
+      <div className="row meta">
+        <label>
+          Ez a node:
+          {/* Az embert a @Név, a jegyet a #1234 hozza létre; ezeknél a típus nem változtatható. */}
+          <select
+            value={node.type ?? ''}
+            disabled={node.type === 'ticket' || node.type === 'person'}
+            title="Magát ezt a node-ot jelöli meg. Embert a szövegben @Név formában hozz létre."
+            onChange={(e) => void update({ type: (e.target.value || null) as NodeType | null })}
+          >
+            {node.type === 'ticket' || node.type === 'person' ? (
+              <option value={node.type}>{TYPE_LABEL[node.type]}</option>
+            ) : (
+              <>
+                <option value="">–</option>
+                <option value="meeting">{TYPE_LABEL.meeting}</option>
+                <option value="topic">{TYPE_LABEL.topic}</option>
+              </>
+            )}
+          </select>
+        </label>
+        {node.type === 'person' && (
           <label>
-            Ez a node:
-            <select
-              value={node.type ?? ''}
-              disabled={node.type === 'ticket'}
-              title="Magát ezt a node-ot jelöli meg; egy emberre a szövegben @Név formában hivatkozz."
-              onChange={(e) => {
-                const next = (e.target.value || null) as NodeType | null;
-                // Egy mondatot ritkán akarunk emberré tenni: az első sor minden szava névvé válna.
-                const sentence = first!.trim().split(/\s+/).length > 2;
-                if (
-                  next === 'person' &&
-                  sentence &&
-                  !window.confirm(
-                    `„${first}” maga lesz egy ember, és a program az első sor minden szavát a nevének tekinti.\n\n` +
-                      'Ha csak említeni akarsz valakit, írd a szövegbe így: @Név.\n\nBiztosan emberré teszed?',
-                  )
-                ) {
-                  return;
-                }
-                void update({ type: next });
+            Becenevek
+            <input
+              title="Ezekre a nevekre is ráismer a szövegekben, ragozva is."
+              value={aliases}
+              placeholder="pl. Szabolcs, Szabika"
+              onChange={(e) => setAliases(e.target.value)}
+              onBlur={() => {
+                const next = aliases.split(',').map((a) => a.trim()).filter(Boolean);
+                if (next.join(',') !== node.aliases.join(',')) void update({ aliases: next });
               }}
-            >
-              <option value="">–</option>
-              {(Object.keys(TYPE_LABEL) as NodeType[]).map((t) => (
-                <option key={t} value={t} disabled={t === 'ticket' && node.type !== 'ticket'}>
-                  {TYPE_LABEL[t]}
-                </option>
-              ))}
-            </select>
-          </label>
-          {node.type === 'person' && (
-            <label>
-              Becenevek
-              <input
-                title="Ezekre a nevekre is ráismer a szövegekben, ragozva is."
-                value={aliases}
-                placeholder="pl. Szabolcs, Szabika"
-                onChange={(e) => setAliases(e.target.value)}
-                onBlur={() => {
-                  const next = aliases.split(',').map((a) => a.trim()).filter(Boolean);
-                  if (next.join(',') !== node.aliases.join(',')) void update({ aliases: next });
-                }}
-                onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
-              />
-            </label>
-          )}
-          {!editing && (
-            <button className="link" onClick={() => setEditing(true)}>
-              Szerkesztés
-            </button>
-          )}
-          <button className="link" onClick={props.onToggleContext}>
-            {props.isContext ? 'Meeting lezárása' : 'Megnyitás meetingként'}
-          </button>
-          {!commenting && (
-            <button className="link" onClick={() => setCommenting(true)}>
-              Komment
-            </button>
-          )}
-          {node.deletable && (
-            <DeleteButton
-              node={node}
-              onDeleted={(parentId) => props.onDeleted(parentId)}
-              onError={async (err) => {
-                onError(err);
-                await onChanged();
-              }}
+              onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
             />
-          )}
-        </div>
-      )}
+          </label>
+        )}
+        {!editing && (
+          <button className="link" onClick={() => setEditing(true)}>
+            Szerkesztés
+          </button>
+        )}
+        <button
+          className="link"
+          onClick={() => {
+            // Amit meetingként nyitunk meg, az meeting; a típusos (ember, jegy, téma) node nem változik.
+            if (!props.isContext && node.type === null) void update({ type: 'meeting' });
+            props.onToggleContext();
+          }}
+        >
+          {props.isContext ? 'Meeting lezárása' : 'Megnyitás meetingként'}
+        </button>
+        {!commenting && (
+          <button className="link" onClick={() => setCommenting(true)}>
+            Komment
+          </button>
+        )}
+        <DeleteButton
+          node={node}
+          onDeleted={(parentId) => props.onDeleted(parentId)}
+          onError={async (err) => {
+            onError(err);
+            await onChanged();
+          }}
+        />
+      </div>
       <Notes
         nodeId={node.id}
         notes={node.notes}
@@ -621,7 +674,9 @@ function Below({ view, onPick, onChanged, onError }: { view: View; onPick: (n: B
     <>
       {items.length > 0 && (
         <section className="items">
-          <h2>Elemek</h2>
+          <h2>
+            Elemek <span className="count">{items.length}</span>
+          </h2>
           <Chips nodes={items} onPick={onPick} />
         </section>
       )}
@@ -684,16 +739,14 @@ function EntryRow({ entry, known, onPick, onChanged, onError }: { entry: Entry; 
         <button className="link" onClick={() => onPick(entry)} title="Középre állítás">
           Megnyitás
         </button>
-        {entry.deletable && (
-          <DeleteButton
-            node={entry}
-            onDeleted={() => void onChanged()}
-            onError={async (err) => {
-              onError(err);
-              await onChanged();
-            }}
-          />
-        )}
+        <DeleteButton
+          node={entry}
+          onDeleted={() => void onChanged()}
+          onError={async (err) => {
+            onError(err);
+            await onChanged();
+          }}
+        />
       </div>
       {editing ? (
         <Editor initial={entry.content} onSave={saveEdit} onCancel={() => setEditing(false)} />
@@ -854,7 +907,7 @@ function Search({ onPick, onError }: { onPick: (n: Brief) => void; onError: (e: 
       onError(err);
     }
   };
-  // Az utolsó sor mindig az új node létrehozása a Bejövő alá.
+  // Az utolsó sor mindig egy új, legfelső szintű node létrehozása.
   const total = results.length + (q.trim() ? 1 : 0);
 
   return (

@@ -16,7 +16,6 @@ export interface NodeRow {
   type: string | null;
   aliases: string[];
   ticket_no: number | null;
-  is_inbox: boolean;
   version: number;
   created_at: Date;
   updated_at: Date;
@@ -27,7 +26,7 @@ export type LinkedSpan = Span & { targetId?: string };
 
 type Queryable = Pick<Tx, 'query'>;
 
-const NODE_COLS = 'id, content, type, aliases, ticket_no, is_inbox, version, created_at, updated_at';
+const NODE_COLS = 'id, content, type, aliases, ticket_no, version, created_at, updated_at';
 const N_COLS = NODE_COLS.split(', ').map((c) => `n.${c}`).join(', ');
 const TIMEZONE = process.env.APP_TIMEZONE ?? 'Europe/Budapest';
 export const NODE_TYPES = ['person', 'ticket', 'meeting', 'topic'] as const;
@@ -35,16 +34,6 @@ export const NODE_TYPES = ['person', 'ticket', 'meeting', 'topic'] as const;
 /** A naptári nap (YYYY-MM-DD) az alkalmazás időzónájában. */
 export function localDate(at: Date = new Date()): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: TIMEZONE }).format(at);
-}
-
-export async function ensureInbox(tx: Queryable, userId: string): Promise<string> {
-  const existing = await tx.query('SELECT id FROM nodes WHERE is_inbox');
-  if (existing.rows[0]) return existing.rows[0].id;
-  const { rows } = await tx.query(
-    `INSERT INTO nodes (content, is_inbox, created_by, updated_by) VALUES ('Bejövő', true, $1, $1) RETURNING id`,
-    [userId],
-  );
-  return rows[0].id;
 }
 
 // ---------- felismerés ----------
@@ -174,7 +163,7 @@ async function reindexAll(tx: Tx, userId: string): Promise<void> {
 
 export interface CreateNodeInput {
   content: string;
-  /** A kiválasztott node, amihez az új tartozik; ha nincs, a Bejövő. */
+  /** A kiválasztott node, amihez az új tartozik; ha nincs, legfelső szintű lesz. */
   parentId?: string;
   /** Második szülő, pl. a nyitott meeting. */
   contextId?: string;
@@ -196,8 +185,8 @@ export function createNode(db: Db, userId: string, input: CreateNodeInput) {
   if (!content) throw new HttpError(400, 'A szöveg nem lehet üres');
   checkType(input.type);
   return withUser(db, userId, async (tx) => {
-    const parentId = input.parentId ?? (await ensureInbox(tx, userId));
-    await requireNode(tx, parentId);
+    const parentId = input.parentId;
+    if (parentId) await requireNode(tx, parentId);
     if (input.contextId) await requireNode(tx, input.contextId);
 
     const { rows } = await tx.query(
@@ -235,6 +224,10 @@ export function updateNode(db: Db, userId: string, id: string, input: UpdateNode
   return withUser(db, userId, async (tx) => {
     const before = await tx.query('SELECT type FROM nodes WHERE id = $1 AND deleted_at IS NULL', [id]);
     if (!before.rows[0]) throw new HttpError(404, 'A node nem található');
+    // Ember csak @Név-vel jön létre; egy bejegyzésből különben másolat-ember lenne.
+    if (input.type === 'person' && before.rows[0].type !== 'person') {
+      throw new HttpError(400, 'Embert a szövegben @Név formában hozz létre');
+    }
     const { rows } = await tx.query(
       `UPDATE nodes SET
          content = coalesce($1, content),
@@ -253,12 +246,15 @@ export function updateNode(db: Db, userId: string, id: string, input: UpdateNode
 }
 
 /**
- * Törölhető az a node, amelynek egyetlen kapcsolata a szülője felé mutat, és nincs (élő) kommentje.
- * SQL-kifejezés az `n` aliasú node-ra.
+ * Törölhető az a node, amelynek legfeljebb egy kapcsolata van, és az is a szülője felé mutat
+ * (a legfelső szintűnek egy sincs), és nincs (élő) kommentje. SQL-kifejezés az `n` aliasú node-ra.
  */
-const DELETABLE = `(NOT n.is_inbox
-  AND (SELECT count(*) FROM edges e WHERE n.id IN (e.source_id, e.target_id)) = 1
-  AND EXISTS (SELECT 1 FROM edges e WHERE e.target_id = n.id AND e.kind IN ('unsorted', 'belongs_to'))
+const DELETABLE = `(
+  CASE (SELECT count(*) FROM edges e WHERE n.id IN (e.source_id, e.target_id))
+    WHEN 0 THEN true
+    WHEN 1 THEN EXISTS (SELECT 1 FROM edges e WHERE e.target_id = n.id AND e.kind IN ('unsorted', 'belongs_to'))
+    ELSE false
+  END
   AND NOT EXISTS (SELECT 1 FROM notes c WHERE c.node_id = n.id AND c.deleted_at IS NULL))`;
 
 /** Végleges törlés: a sor és a kapcsolata eltűnik, visszaállítás nincs; a napló „remove” bejegyzést kap. */
@@ -281,13 +277,27 @@ export function deleteNode(db: Db, userId: string, id: string, version: unknown)
     await tx.query('DELETE FROM edges WHERE target_id = $1', [id]);
     await tx.query('DELETE FROM nodes WHERE id = $1', [id]); // a dátumok vele mennek (ON DELETE CASCADE)
     if (node.type === 'person') await reindexAll(tx, userId); // pl. a „Peti” újra egyértelmű lehet
-    return { parentId: node.parent_id as string };
+    return { parentId: (node.parent_id as string | null) ?? null }; // legfelső szintűnél null
   });
 }
 
 // ---------- olvasás ----------
 
-const brief = (r: NodeRow) => ({ id: r.id, content: r.content, type: r.type, ticket_no: r.ticket_no, is_inbox: r.is_inbox });
+const brief = (r: NodeRow) => ({ id: r.id, content: r.content, type: r.type, ticket_no: r.ticket_no });
+
+/**
+ * A kezdőlap: a legfelső szintű (szülő nélküli) node-ok, a legújabb elöl. Az ember és a jegy
+ * nem kerül ide, bár nekik sincs szülőjük: őket a keresőből és az említésekből érjük el.
+ */
+export async function getRoots(db: Db) {
+  const { rows } = await db.query(
+    `SELECT ${N_COLS} FROM nodes n
+     WHERE n.deleted_at IS NULL AND n.type IS DISTINCT FROM 'person' AND n.type IS DISTINCT FROM 'ticket'
+       AND NOT EXISTS (SELECT 1 FROM edges e WHERE e.target_id = n.id AND e.kind IN ('unsorted', 'belongs_to'))
+     ORDER BY n.created_at DESC`,
+  );
+  return { roots: rows.map((r) => ({ ...brief(r), created_at: r.created_at as Date })) };
+}
 
 export interface NoteRow {
   id: string;

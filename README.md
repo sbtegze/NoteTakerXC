@@ -23,8 +23,10 @@ fut, és mentéskor azonnal frissül).
 
 - **Rögzítés:** a középen álló node alatti mezőbe írsz, Enter ment. A `#1234`, a nevek és a dátumok maguktól kiemelődnek.
 - **Középre állítás:** bármelyik címkére vagy kiemelt szövegrészre kattintva az áll középre. Fent az útvonal visszavisz.
-- **Keresés:** Ctrl+K. Ha nincs találat, az Enter új node-ot hoz létre a Bejövő alá.
-- **Emberek:** hozz létre egy node-ot a névvel, és állítsd a típusát „Ember”-re. Utána a szövegekben ragozva is felismeri.
+- **Kezdőlap (⌂):** a legfelső szintű node-ok, a legújabb elöl. A fenti mezőbe írva új legfelső szintű node jön létre.
+- **Keresés:** Ctrl+K. Ha nincs találat, az Enter új, legfelső szintű node-ot hoz létre.
+- **Emberek:** írd a szövegbe így: `@Név` (többtagú is lehet: `@Mátrai Peti`). Ha még nincs ilyen ember, létrejön,
+  és utána `@` nélkül, ragozva is felismeri.
 - **Meeting:** a „Megnyitás meetingként” után minden új bejegyzés a meetinghez is kapcsolódik, bárhová írod.
 
 ## Tesztek
@@ -51,4 +53,5 @@ szerepelnie kell a `test` szónak.
 | `PATCH /api/nodes/:id` | Szerkesztés: `version` (ütközésnél 409), és `content`, `type` vagy `aliases` |
 | `GET /api/nodes/:id` | A node és a környezete: szülők, bejegyzések, kapcsolódó node-ok |
 | `GET /api/search?q=` | Keresés |
-| `GET /api/home` | A kezdőpont (Bejövő) azonosítója |
+| `DELETE /api/nodes/:id?version=` | Végleges törlés (csak ha legfeljebb a szülője felé van kapcsolata, és nincs kommentje) |
+| `GET /api/roots` | A kezdőlap: a legfelső szintű node-ok |

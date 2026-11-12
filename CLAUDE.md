@@ -33,14 +33,20 @@ Ez a hét kérdés az MVP mércéje: valódi meetingek után mindegyikre legfelj
 - **Dátum:** év nélkül a rögzítés napjához legközelebbi előfordulás. A relatív dátum a node `created_at` napjához
   képest értendő.
 - **Tag = node:** nincs külön tag vagy csoport; az ember, a jegy, a meeting is node, `type` mezővel.
+- **Típus:** embert csak a `@Név` hoz létre, jegyet a `#1234`; ezeknél a típus kézzel nem állítható (a szerver
+  a kézi „emberré tételt” elutasítja, a téves embert viszont vissza lehet állítani). Kézzel csak Meeting és Téma
+  választható; a „Megnyitás meetingként” a típus nélküli node-ot magától Meetingre állítja.
 - **Egy közös térkép**, munkaterületek nélkül. A node és a kapcsolat mindig közös.
+- **Nincs nyitó node:** a szülő nélküli node legfelső szintű (pl. egy-egy meeting), felfelé nem kapcsolódik.
+  A kezdőlap a legfelső szintű node-ok listája, a legújabb elöl, ember és jegy nélkül.
 - **Komment:** a `notes` tábla, pontosan egy node-hoz tartozik. Most minden publikus; a `visibility` mező a
   későbbi privát jegyzethez van fenntartva. A kommentben a felismerés csak kiemel, kapcsolatot nem hoz létre.
 - **Jogosultság:** egyelőre nincs. Bejelentkezés kell, mert internet felé nyitott VPS-en fog futni.
 - **Napló:** minden változást az adatbázis triggerei írnak a `change_log` táblába; nem módosítható.
-- **Node törlése:** csak az a node törölhető, amelynek egyetlen kapcsolata a szülője felé mutat, és nincs élő
-  kommentje (a Bejövő soha). Kuka ikon, megerősítés, utána fizikai törlés; a felületről nincs visszaállítás,
-  de a napló „remove” sora megőrzi a régi állapotot.
+- **Node törlése:** csak az a node törölhető, amelynek legfeljebb egy kapcsolata van, és az is a szülője felé
+  mutat (a kapcsolat nélküli legfelső szintű tehát igen), és nincs élő kommentje. A kuka mindig látszik, a nem
+  törölhetőn inaktív. Megerősítés, utána fizikai törlés; a felületről nincs visszaállítás, de a napló „remove”
+  sora megőrzi a régi állapotot.
 - **Nem kell az MVP-be:** élő frissítés, AI-javaslatok, TipTap, gráfkönyvtár, natív app.
 
 ## Állapot

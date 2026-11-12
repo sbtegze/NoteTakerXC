@@ -59,7 +59,7 @@ describe('középre állítás', () => {
       return a ? [a.content, ...a.parent_ids.flatMap(chain)] : [];
     };
     expect(titles(view.parents)).toEqual(['István jövő héten nincs']);
-    expect(chain(entry.id)).toEqual(['István jövő héten nincs', 'Heti egyeztetés 11.10.', 'Bejövő']);
+    expect(chain(entry.id)).toEqual(['István jövő héten nincs', 'Heti egyeztetés 11.10.']);
 
     // Kör: a meeting az al-bejegyzés alá is bekerül.
     const { id: userId } = (await db.query('SELECT id FROM users LIMIT 1')).rows[0];
@@ -73,11 +73,14 @@ describe('középre állítás', () => {
     await db.query(`DELETE FROM edges WHERE source_id = $1 AND target_id = $2`, [sub.id, meeting.id]);
   });
 
-  it('a kezdőpont a Bejövő, alatta a közvetlenül rögzített node-ok', async () => {
-    const { id } = await get('/api/home');
-    const view = await get(`/api/nodes/${id}`);
-    expect(view.center.content).toBe('Bejövő');
-    expect(titles(view.below)).toEqual(['Szabi', 'István', 'Heti egyeztetés 11.10.']);
+  it('a kezdőlapon a legfelső szintű node-ok, a legújabb elöl; ember és jegy nélkül', async () => {
+    const later = await create({ content: 'ERP technikai státusz', type: 'meeting' });
+    const { roots } = await get('/api/roots');
+    expect(titles(roots).slice(0, 2)).toEqual(['ERP technikai státusz', 'Heti egyeztetés 11.10.']);
+    expect(titles(roots)).not.toContain('Szabi');
+    expect(titles(roots)).not.toContain('#1234');
+    expect(titles(roots)).not.toContain('Szabi a #1234-et pénteken beadja'); // a meeting alatt van
+    await db.query('DELETE FROM nodes WHERE id = $1', [later.id]);
   });
 
   it('a jegynél időrendben látszik minden, ami róla elhangzott, és hogy hol', async () => {
@@ -97,7 +100,7 @@ describe('középre állítás', () => {
     const view = await get(`/api/nodes/${istvan.id}`);
     expect(titles(view.below)).toEqual(['#1234: Istvánra várunk a specifikáció miatt', 'István jövő héten nincs']);
     expect(titles(view.connected)).toEqual(['#1234']);
-    expect(titles(view.parents)).toEqual(['Bejövő']);
+    expect(titles(view.parents)).toEqual([]);
   });
 
   it('a meetingnél az ott rögzített bejegyzések és az érintettek', async () => {
@@ -124,15 +127,20 @@ describe('középre állítás', () => {
 });
 
 describe('típus és becenév', () => {
-  it('ha egy node utólag ember lesz, a korábbi szövegekben is felismeri', async () => {
-    const geza = await create({ content: 'Géza' });
+  it('az @-tal létrejött embert a korábbi szövegekben és a becenevén is felismeri', async () => {
     await create({ content: 'Gézának szólni kell a #1234 miatt', parentId: meeting.id });
-    expect(titles((await get(`/api/nodes/${geza.id}`)).below)).toEqual([]);
+    await create({ content: '@Géza is jön', parentId: meeting.id });
+    const geza = (await db.query(`SELECT id, version FROM nodes WHERE type = 'person' AND content = 'Géza'`)).rows[0];
+    expect(titles((await get(`/api/nodes/${geza.id}`)).below)).toEqual(['Gézának szólni kell a #1234 miatt', '@Géza is jön']);
 
-    const res = await patch(geza.id, { version: geza.version, type: 'person', aliases: ['Gézu'] });
+    const res = await patch(geza.id, { version: geza.version, aliases: ['Gézu'] });
     expect(res.statusCode).toBe(200);
     await create({ content: 'Gézu ráér', parentId: meeting.id });
-    expect(titles((await get(`/api/nodes/${geza.id}`)).below)).toEqual(['Gézának szólni kell a #1234 miatt', 'Gézu ráér']);
+    expect(titles((await get(`/api/nodes/${geza.id}`)).below)).toEqual([
+      'Gézának szólni kell a #1234 miatt',
+      '@Géza is jön',
+      'Gézu ráér',
+    ]);
 
     // Ha már nem ember, az említések megszűnnek.
     const now = (await get(`/api/nodes/${geza.id}`)).center;

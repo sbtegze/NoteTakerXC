@@ -7,8 +7,8 @@ import type { Db } from './db.js';
 import {
   createNode,
   deleteNode,
-  ensureInbox,
   getNeighborhood,
+  getRoots,
   HttpError,
   searchNodes,
   updateNode,
@@ -116,12 +116,12 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
     return updateNode(db, req.user.id, req.params.id, { content, version: version as number, type, aliases });
   });
 
-  // A kezdőpont: a Bejövő node.
   app.delete<{ Params: { id: string }; Querystring: { version?: string } }>('/api/nodes/:id', async (req) =>
     deleteNode(db, req.user.id, req.params.id, Number(req.query.version)),
   );
 
-  app.get('/api/home', async (req) => ({ id: await ensureInbox(db, req.user.id) }));
+  // A kezdőlap: a legfelső szintű node-ok.
+  app.get('/api/roots', async () => getRoots(db));
 
   app.get<{ Params: { id: string } }>('/api/nodes/:id', async (req) => getNeighborhood(db, req.params.id));
 

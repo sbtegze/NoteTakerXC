@@ -94,11 +94,8 @@ describe('séma', () => {
     expect((await logFor(rows[0].id)).map((l) => l.action)).toEqual(['create', 'update']);
   });
 
-  it('csak egy Bejövő node lehet', async () => {
-    const mk = () =>
-      db.query('INSERT INTO nodes (content, is_inbox, created_by, updated_by) VALUES ($1, true, $2, $2)', ['Bejövő', user.id]);
-    await mk();
-    await expect(mk()).rejects.toThrow(/unique/i);
+  it('nincs nyitó node: az is_inbox oszlop megszűnt', async () => {
+    await expect(db.query('SELECT is_inbox FROM nodes')).rejects.toThrow(/is_inbox/);
   });
 
   it('a napló nem írható át és nem törölhető', async () => {

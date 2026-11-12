@@ -53,12 +53,11 @@ describe('rögzítés', () => {
     expect(res.statusCode).toBe(401);
   });
 
-  it('szülő nélkül a Bejövő alá kerül, rendezetlen kapcsolattal', async () => {
+  it('szülő nélkül legfelső szintű node lesz, felfelé nem kapcsolódik', async () => {
     const a = await create({ content: 'első gondolat' });
     const b = await create({ content: 'második gondolat' });
-    expect(await parentsOf(a.id)).toEqual(['Bejövő']);
-    expect(await parentsOf(b.id)).toEqual(['Bejövő']);
-    expect((await db.query('SELECT count(*)::int AS n FROM nodes WHERE is_inbox')).rows[0].n).toBe(1);
+    expect(await parentsOf(a.id)).toEqual([]);
+    expect(await parentsOf(b.id)).toEqual([]);
   });
 
   it('a meeting második szülőként kapcsolódik', async () => {
@@ -167,6 +166,16 @@ describe('rögzítés', () => {
     await create({ content: '@Gulyás Peti is jön' });
     const later = await create({ content: 'Peti és Mátrai' });
     expect(await edgesFrom(later.id)).toEqual(['mention:Mátrai Peti']);
+  });
+
+  it('kézzel nem lehet emberré tenni egy node-ot, a tévesen emberré tettet viszont vissza lehet állítani', async () => {
+    const node = await create({ content: '@Ödön címsor' });
+    const res = await patch(node.id, { type: 'person', version: node.version });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toMatch(/@Név/);
+
+    const wrong = await create({ content: '@Ödön', type: 'person' });
+    expect((await patch(wrong.id, { type: null, version: wrong.version })).statusCode).toBe(200);
   });
 
   it('szerkesztéskor is létrejön az új @-os ember', async () => {

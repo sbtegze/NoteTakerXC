@@ -84,12 +84,21 @@ describe('node törlése', () => {
     expect((await view(target.id)).center.deletable).toBe(true);
   });
 
-  it('a Bejövő, az elavult verzió és az ismeretlen node', async () => {
-    const { id } = (await app.inject({ url: '/api/home', cookies })).json();
-    const inbox = (await view(id)).center;
-    expect(inbox.deletable).toBe(false);
-    expect((await del(inbox)).statusCode).toBe(409);
+  it('a kapcsolat nélküli legfelső szintű node is törölhető, ha valami említi, nem', async () => {
+    const root = await create({ content: 'üres legfelső' });
+    expect((await view(root.id)).center.deletable).toBe(true);
+    const res = await del(root);
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ parentId: null });
+    expect(await exists(root.id)).toBe(false);
 
+    await create({ content: '@Ödön ráér' }); // Ödön legfelső szintű ember, és ez a sor említi
+    const odon = (await db.query(`SELECT id, version FROM nodes WHERE content = 'Ödön'`)).rows[0];
+    expect((await view(odon.id)).center.deletable).toBe(false);
+    expect((await del(odon)).statusCode).toBe(409);
+  });
+
+  it('az elavult verzió és az ismeretlen node', async () => {
     const parent = await create({ content: 'szülő 4' });
     const leaf = await create({ content: 'régi', parentId: parent.id });
     expect((await del({ ...leaf, version: leaf.version + 1 })).statusCode).toBe(409);

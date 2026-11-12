@@ -133,7 +133,12 @@ h3 {
   margin-left: auto;
 }
 
-.link.icon:hover {
+.link.icon[aria-disabled='true'] {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.link.icon:not([aria-disabled='true']):hover {
   color: var(--error);
 }
 
@@ -309,6 +314,21 @@ button:disabled {
 
 .results .new {
   color: var(--accent);
+}
+
+/* ---------- kezdőlap ---------- */
+
+.home-page {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 20px 16px 60px;
+  display: grid;
+  gap: 14px;
+}
+
+.crumb.home {
+  font-size: 1.1rem;
+  line-height: 1;
 }
 
 /* ---------- térkép ---------- */

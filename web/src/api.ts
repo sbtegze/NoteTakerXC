@@ -11,7 +11,6 @@ export interface Brief {
   content: string;
   type: NodeType | null;
   ticket_no: number | null;
-  is_inbox: boolean;
 }
 
 export interface Span {
@@ -102,7 +101,7 @@ export const api = {
   me: () => call<{ user: User }>('GET', '/api/me'),
   login: (email: string, password: string) => call<{ user: User }>('POST', '/api/login', { email, password }),
   logout: () => call('POST', '/api/logout', {}),
-  home: () => call<{ id: string }>('GET', '/api/home'),
+  roots: () => call<{ roots: (Brief & { created_at: string })[] }>('GET', '/api/roots'),
   view: (id: string) => call<View>('GET', `/api/nodes/${id}`),
   search: (q: string) => call<{ results: Brief[] }>('GET', `/api/search?q=${encodeURIComponent(q)}`),
   create: (input: { content: string; parentId?: string; contextId?: string }) =>
@@ -114,11 +113,8 @@ export const api = {
     call<{ note: Note }>('PATCH', `/api/notes/${id}`, { version, content }),
   deleteNote: (id: string, version: number) => call('DELETE', `/api/notes/${id}?version=${version}`),
   deleteNode: (id: string, version: number) =>
-    call<{ parentId: string }>('DELETE', `/api/nodes/${id}?version=${version}`),
+    call<{ parentId: string | null }>('DELETE', `/api/nodes/${id}?version=${version}`),
 };
 
 /** A node rövid neve: a szöveg első sora. */
-/** A Bejövő jele: szöveges neve nincs a felületen. */
-export const INBOX_SYMBOL = '📥';
-export const title = (n: { content: string; is_inbox?: boolean }) =>
-  n.is_inbox ? INBOX_SYMBOL : (n.content.split('\n')[0] ?? '');
+export const title = (n: { content: string }) => n.content.split('\n')[0] ?? '';
