@@ -8,7 +8,7 @@ Rögzítéskor csak szöveget írsz; a jegyszámot (`#1234`), a neveket és a d�
 1. Hozz létre két PostgreSQL adatbázist: `notetaker` és `notetaker_test`.
 2. Másold a `.env.example` fájlt `.env` néven, és írd át a kapcsolati adatokat.
 3. `npm install`
-4. `npm run create-user -- <e-mail> "<név>" <jelszó>` (a jelszó legalább 10 karakter)
+4. `npm run create-user` – bekéri az e-mailt, a nevet és a jelszót (legalább 10 karakter)
 5. `npm run dev:server`
 
 A migrációk a szerver indításakor maguktól lefutnak.

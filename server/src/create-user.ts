@@ -1,15 +1,73 @@
+import { createInterface } from 'node:readline/promises';
+import { Writable } from 'node:stream';
 import { createUser } from './auth.js';
 import { createDb } from './db.js';
 import { migrate } from './migrate.js';
 
-const [email, displayName, password] = process.argv.slice(2);
-if (!email || !displayName || !password) {
-  console.error('Használat: npm run create-user -- <e-mail> <megjelenített név> <jelszó>');
-  process.exit(1);
+/**
+ * Felhasználó létrehozása vagy jelszavának cseréje.
+ * Paraméter nélkül futtatva bekéri az adatokat – így a jelszó nem kerül a parancssori előzményekbe.
+ */
+const interactive = process.stdin.isTTY === true;
+let rl: ReturnType<typeof createInterface> | undefined;
+let lines: AsyncIterator<string> | undefined;
+let muted = false;
+
+// A readline ezen keresztül ír; jelszó bekérésekor elnémítjuk, hogy a begépelt szöveg ne látsszon.
+const output = new Writable({
+  write(chunk, _encoding, done) {
+    if (!muted) process.stdout.write(chunk);
+    done();
+  },
+});
+
+async function ask(question: string, hidden = false): Promise<string> {
+  rl ??= createInterface({ input: process.stdin, output, terminal: interactive });
+  if (!interactive) {
+    // Átirányított bemenet (pl. szkriptből): soronként olvasunk.
+    lines ??= rl[Symbol.asyncIterator]();
+    process.stdout.write(question);
+    const next = await lines.next();
+    process.stdout.write('\n');
+    return next.done ? '' : next.value.trim();
+  }
+  const pending = rl.question(question); // a kérdés még kiíródik
+  muted = hidden;
+  const answer = await pending;
+  muted = false;
+  if (hidden) process.stdout.write('\n');
+  return answer.trim();
 }
 
-const db = createDb();
-await migrate(db);
-const user = await createUser(db, email, displayName, password);
-console.log(`Felhasználó kész: ${user.email}`);
-await db.end();
+function explain(err: unknown): string {
+  const e = err as { code?: string; message?: string };
+  if (e.message?.includes('DATABASE_URL')) {
+    return 'A DATABASE_URL nincs beállítva. Másold a .env.example fájlt .env néven a repó gyökerébe, és írd át.';
+  }
+  if (e.code === 'ECONNREFUSED') return 'Az adatbázis nem érhető el. Fut a PostgreSQL, és jó a gép meg a port a DATABASE_URL-ben?';
+  if (e.code === '28P01') return 'Az adatbázis elutasította a jelszót. Ellenőrizd a DATABASE_URL-t (a különleges karaktereket kódolni kell).';
+  if (e.code === '3D000') return 'A DATABASE_URL-ben megadott adatbázis nem létezik.';
+  if (e.code === '42501') return 'Az adatbázis-felhasználónak nincs joga táblákat létrehozni. Legyen ő az adatbázis tulajdonosa.';
+  if (e.code === 'ERR_INVALID_URL') return 'A DATABASE_URL nem érvényes. A jelszó különleges karaktereit (@ : / # ? %) kódolni kell.';
+  return e.message ?? String(err);
+}
+
+try {
+  const [argEmail, argName, argPassword] = process.argv.slice(2);
+  const db = createDb();
+  try {
+    await migrate(db);
+    const email = argEmail ?? (await ask('E-mail: '));
+    const displayName = argName ?? (await ask('Megjelenített név: '));
+    const password = argPassword ?? (await ask('Jelszó (legalább 10 karakter): ', true));
+    if (!email.includes('@') || !displayName) throw new Error('Az e-mail és a név kötelező.');
+    const user = await createUser(db, email, displayName, password);
+    console.log(`Felhasználó kész: ${user.email}`);
+  } finally {
+    rl?.close();
+    await db.end();
+  }
+} catch (err) {
+  console.error(`Hiba: ${explain(err)}`);
+  process.exitCode = 1;
+}
