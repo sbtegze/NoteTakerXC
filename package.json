@@ -6,6 +6,7 @@
     "web"
   ],
   "scripts": {
+    "up": "git pull origin main && npm install --no-audit --no-fund && npm run build && npm start",
     "build": "npm run build -w web",
     "start": "npm run start -w server",
     "dev:server": "npm run dev -w server",

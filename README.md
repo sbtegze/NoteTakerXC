@@ -12,7 +12,8 @@ Rögzítéskor csak szöveget írsz; a jegyszámot (`#1234`), a neveket és a d�
 5. `npm run build` – lefordítja a felületet
 6. `npm start`, majd nyisd meg: http://localhost:3000
 
-Frissítés után (`git pull`): `npm install`, `npm run build`, és indítsd újra a szervert.
+**Frissítés és indítás egy lépésben:** `npm run up` (vagy dupla kattintás az `inditas.cmd` fájlra). Ez letölti a
+legfrissebb változatot, telepíti a függőségeket, lefordítja a felületet, és elindítja a szervert.
 A migrációk a szerver indításakor maguktól lefutnak.
 
 Fejlesztéshez két terminálban `npm run dev:server` és `npm run dev:web` (ez utóbbi a http://localhost:5173 címen
