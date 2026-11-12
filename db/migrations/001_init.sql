@@ -2,8 +2,6 @@
 -- Egy közös térkép, egy (vagy kevés) felhasználó, jogosultságkezelés nélkül.
 -- A notes.visibility mező a későbbi privát jegyzethez van fenntartva.
 
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
-
 CREATE TABLE users (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   email         TEXT NOT NULL UNIQUE,

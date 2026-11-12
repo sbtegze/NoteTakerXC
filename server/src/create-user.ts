@@ -70,7 +70,16 @@ function explain(err: unknown): string {
   if (e.code === 'ECONNREFUSED') return 'Az adatbázis nem érhető el. Fut a PostgreSQL, és jó a gép meg a port a DATABASE_URL-ben?';
   if (e.code === '28P01') return `Az adatbázis elutasította a jelszót. ${describeUrl()}`;
   if (e.code === '3D000') return 'A DATABASE_URL-ben megadott adatbázis nem létezik.';
-  if (e.code === '42501') return 'Az adatbázis-felhasználónak nincs joga táblákat létrehozni. Legyen ő az adatbázis tulajdonosa.';
+  if (e.code === '42501') {
+    const url = new URL(process.env.DATABASE_URL!);
+    const [user, dbName] = [decodeURIComponent(url.username), url.pathname.slice(1)];
+    return (
+      `A(z) "${user}" felhasználónak nincs joga táblákat létrehozni a(z) "${dbName}" adatbázisban (${e.message}). ` +
+      `Futtasd a postgres felhasználóval, a(z) "${dbName}" adatbázishoz kapcsolódva:\n` +
+      `  ALTER DATABASE ${dbName} OWNER TO ${user};\n` +
+      `  ALTER SCHEMA public OWNER TO ${user};`
+    );
+  }
   if (e.code === 'ERR_INVALID_URL') return 'A DATABASE_URL nem érvényes. A jelszó különleges karaktereit (@ : / # ? %) kódolni kell.';
   return e.message ?? String(err);
 }
