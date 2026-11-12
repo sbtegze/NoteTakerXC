@@ -3,7 +3,15 @@ import rateLimit from '@fastify/rate-limit';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { login, logout, SESSION_COOKIE, SESSION_DAYS, userForToken, type User } from './auth.js';
 import type { Db } from './db.js';
-import { createNode, HttpError, updateNode, type CreateNodeInput } from './nodes.js';
+import {
+  createNode,
+  ensureInbox,
+  getNeighborhood,
+  HttpError,
+  searchNodes,
+  updateNode,
+  type CreateNodeInput,
+} from './nodes.js';
 
 function optionalString(value: unknown, name: string): string | undefined {
   if (value === undefined || value === null) return undefined;
@@ -89,16 +97,28 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
     return reply.code(201).send(result);
   });
 
-  app.patch<{ Params: { id: string }; Body: { content?: string; version?: number } }>(
-    '/api/nodes/:id',
-    async (req) => {
-      const { content, version } = req.body ?? {};
-      if (typeof content !== 'string' || !Number.isInteger(version)) {
-        throw new HttpError(400, 'A szöveg és a verzió kötelező');
-      }
-      return updateNode(db, req.user.id, req.params.id, { content, version: version as number });
-    },
-  );
+  app.patch<{
+    Params: { id: string };
+    Body: { content?: string; version?: number; type?: string | null; aliases?: string[] };
+  }>('/api/nodes/:id', async (req) => {
+    const { content, version, type, aliases } = req.body ?? {};
+    if (!Number.isInteger(version)) throw new HttpError(400, 'A verzió kötelező');
+    if (content !== undefined && typeof content !== 'string') throw new HttpError(400, 'Hibás mező: content');
+    if (type !== undefined && type !== null && typeof type !== 'string') throw new HttpError(400, 'Hibás mező: type');
+    if (aliases !== undefined && !(Array.isArray(aliases) && aliases.every((a) => typeof a === 'string'))) {
+      throw new HttpError(400, 'Hibás mező: aliases');
+    }
+    return updateNode(db, req.user.id, req.params.id, { content, version: version as number, type, aliases });
+  });
+
+  // A kezdőpont: a Bejövő node.
+  app.get('/api/home', async (req) => ({ id: await ensureInbox(db, req.user.id) }));
+
+  app.get<{ Params: { id: string } }>('/api/nodes/:id', async (req) => getNeighborhood(db, req.params.id));
+
+  app.get<{ Querystring: { q?: string } }>('/api/search', async (req) => ({
+    results: await searchNodes(db, typeof req.query.q === 'string' ? req.query.q : ''),
+  }));
 
   return app;
 }
