@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { api, ApiError, title, type Brief, type Detailed, type Entry, type Note, type NodeType, type Span, type User, type View } from './api';
 
 interface Crumb {
@@ -262,11 +262,11 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
         <main className="map" key={view.center.id}>
           <aside className="side">
             <h2>Ide tartozik</h2>
-            {view.parents.length > 0 && <Ancestors view={view} onPick={go} />}
+            {view.parents.length > 0 && <TopDownTree view={view} from={view.parents.map((p) => p.id)} onPick={go} />}
             {view.mention_parent_ids.length > 0 && (
               <div className="group">
                 <h3>Említve itt</h3>
-                <MentionTree view={view} onPick={go} />
+                <TopDownTree view={view} from={view.mention_parent_ids} onPick={go} />
               </div>
             )}
             {!view.parents.length && !view.mention_parent_ids.length && <p className="empty">Legfelső szintű</p>}
@@ -503,19 +503,20 @@ function chipType(n: { content: string; type: NodeType | null }): string {
 }
 
 /**
- * „Említve itt”: ahol a node-ot említik, felülről lefelé. Felül a legfelső szintű node-ok, alattuk beljebb
- * az alábontás, egészen az említő bejegyzések szülőjéig; minden szinten a legújabb elöl.
+ * Az ősök fája felülről lefelé: felül a legfelső szintű node-ok, alattuk beljebb az alábontás, egészen a
+ * `from` node-okig (a középen álló node szüleiig, ill. „Említve itt”-nél az említő bejegyzések szüleiig);
+ * minden szinten a legújabb elöl.
  */
-function MentionTree({ view, onPick }: { view: View; onPick: (n: Brief) => void }) {
+function TopDownTree({ view, from, onPick }: { view: View; from: string[]; onPick: (n: Brief) => void }) {
   const byId = new Map(view.ancestors.map((a) => [a.id, a]));
-  // Az említő bejegyzések szülei és minden ősük.
+  // A kiinduló node-ok és minden ősük.
   const inTree = new Set<string>();
   const collect = (id: string) => {
     if (inTree.has(id) || !byId.has(id) || id === view.center.id) return;
     inTree.add(id);
     byId.get(id)!.parent_ids.forEach(collect);
   };
-  view.mention_parent_ids.forEach(collect);
+  from.forEach(collect);
   const newestFirst = (ids: string[]) =>
     ids.map((id) => byId.get(id)!).sort((a, b) => b.created_at.localeCompare(a.created_at));
   const childrenOf = (id: string) =>
@@ -539,34 +540,6 @@ function MentionTree({ view, onPick }: { view: View; onPick: (n: Brief) => void 
     );
   };
   return branch(roots, new Set());
-}
-
-/** Az ősök fája: a közvetlen szülők, alattuk beljebb a saját szüleik, egészen a gyökérig. */
-function Ancestors({ view, onPick }: { view: View; onPick: (n: Brief) => void }) {
-  const byId = new Map(view.ancestors.map((a) => [a.id, a]));
-  const branch = (ids: string[], seen: Set<string>): ReactNode => {
-    const shown = ids.filter((id) => byId.has(id) && !seen.has(id)); // a kör nem pörög körbe
-    if (!shown.length) return null;
-    return (
-      <ul className="tree">
-        {shown.map((id) => {
-          const a = byId.get(id)!;
-          return (
-            <li key={id}>
-              <button className={`chip type-${chipType(a)}`} onClick={() => onPick(a)} title={a.content}>
-                <span className="chip-title">{title(a)}</span>
-              </button>
-              {branch(a.parent_ids, new Set([...seen, id]))}
-            </li>
-          );
-        })}
-      </ul>
-    );
-  };
-  return branch(
-    view.parents.map((p) => p.id),
-    new Set([view.center.id]),
-  );
 }
 
 /** A meeting és a téma címe (az első sora) egészben egy pill, a típus színével. */
@@ -628,7 +601,7 @@ const localDay = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pa
  * Tipp a „/parancs cím” első sorhoz: mit hoz létre belőle a szerver (nodes.ts, parseCommand).
  * `day` a rögzítés napja, ez kerül a cím mögé; `when` pl. „Enterre” vagy „Mentéskor”.
  */
-function commandHint(text: string, day: string, when: string): string | null {
+function commandHint(text: string, day: string, when: string, known: (type: NodeType) => string[]): string | null {
   const cmd = /^\/(\p{L}*)(?:[ \t]+(\S.*))?$/u.exec((text.split('\n')[0] ?? '').trim());
   if (!cmd) return null;
   const type = COMMAND_TYPES[cmd[1]!.toLowerCase()];
@@ -636,17 +609,136 @@ function commandHint(text: string, day: string, when: string): string | null {
     // Ha a címben számmal írt dátum van, a szerver nem ír mögé még egyet (nodes.ts, parseCommand).
     const name = cmd[2].trim();
     const dated = /\d{4}[-.]\s?\d{1,2}[-.]\s?\d{1,2}|(?<![\d.])\d{1,2}\.\s?\d{1,2}(?!\d)|(?:jan|feb|márc|ápr|máj|jún|júl|aug|szept|okt|nov|dec)\p{L}*\.?\s*\d{1,2}/iu.test(name);
-    return `${when} ${TYPE_LABEL[type]} lesz belőle: „${dated ? name : `${name} ${day}`}”`;
+    const full = dated ? name : `${name} ${day}`;
+    // A meglévőt a szerver nem hozza létre újra, hanem ide linkeli (nodes.ts, createNode).
+    const existing = known(type).find((t) => t.toLowerCase() === full.toLowerCase());
+    if (existing) return `${when} a meglévő „${existing}” kerül ide (nem jön létre új)`;
+    return `${when} új ${TYPE_LABEL[type]} lesz belőle: „${full}”`;
   }
   if (type) return `Írd a parancs után a címet, pl. /${cmd[1]} AI workshop`;
   return 'Parancsok: /meeting cím, /téma cím. Más perjeles sor sima szöveg marad.';
 }
 
+/** A kurzor előtt gépelt hivatkozás: @név, #jegy, vagy az első sorban „/meeting cím”, „/téma cím”. */
+interface Token {
+  type: NodeType;
+  query: string;
+  start: number;
+  end: number;
+  command?: string;
+}
+function tokenAt(text: string, caret: number): Token | null {
+  const before = text.slice(0, caret);
+  if (!before.includes('\n')) {
+    const cmd = /^\/(\p{L}+)[ \t]+(.*)$/u.exec(before);
+    const type = cmd ? COMMAND_TYPES[cmd[1]!.toLowerCase()] : undefined;
+    if (cmd && type) return { type, query: cmd[2]!, start: 0, end: caret, command: cmd[1] };
+  }
+  const at = /(?<![\p{L}\d])@(\p{L}*(?: \p{L}*)?)$/u.exec(before);
+  if (at) return { type: 'person', query: at[1]!, start: at.index, end: caret };
+  const hash = /(?<![\p{L}\d])#(\d*)$/u.exec(before);
+  if (hash) return { type: 'ticket', query: hash[1]!, start: hash.index, end: caret };
+  return null;
+}
+
+/**
+ * Gépelés közbeni javaslat a meglévő elemekből (@ után emberek, # után jegyek, /meeting és /téma után
+ * meetingek, témák). ↑/↓ választ, Enter vagy Tab beírja, Esc bezárja.
+ */
+function useTypeahead(text: string, setText: (t: string) => void, ref: React.RefObject<HTMLTextAreaElement>) {
+  const [caret, setCaret] = useState(0);
+  const [lists, setLists] = useState<Partial<Record<NodeType, Brief[]>>>({});
+  const [active, setActive] = useState(0);
+  const [dismissed, setDismissed] = useState<number | null>(null);
+  const token = tokenAt(text, caret);
+
+  // Minden új hivatkozásnál frissen töltjük, hogy az időközben létrejött elemek is benne legyenek.
+  useEffect(() => {
+    if (!token) return;
+    const type = token.type;
+    api
+      .byType(type)
+      .then((r) => setLists((l) => ({ ...l, [type]: r.nodes })))
+      .catch(() => {});
+  }, [token?.type, token?.start]); // gépelés közben (query) nem töltjük újra
+
+  useEffect(() => setActive(0), [token?.type, token?.start, token?.query]);
+
+  // Szó elején egyezik (az „AI” az „AI workshop”-ot hozza, a „technikai”-t nem); a jegynél a szám elején.
+  const q = token?.query.trim().toLowerCase() ?? '';
+  const matches = (n: Brief) => {
+    const t = title(n).toLowerCase();
+    if (token?.type === 'ticket') return t.startsWith(`#${q}`) && t !== `#${q}`;
+    return t !== q && (t.startsWith(q) || t.split(/\s+/).some((w) => w.startsWith(q)));
+  };
+  const items = token && dismissed !== token.start ? (lists[token.type] ?? []).filter(matches).slice(0, 8) : [];
+
+  const pick = (n: Brief) => {
+    if (!token) return;
+    const insert =
+      token.command !== undefined
+        ? `/${token.command} ${title(n)}`
+        : token.type === 'ticket'
+          ? `${title(n)} `
+          : `@${title(n)} `;
+    const next = text.slice(0, token.start) + insert + text.slice(token.end);
+    const pos = token.start + insert.length;
+    pendingCaret.current = pos;
+    setCaret(pos);
+    setText(next);
+  };
+  // A beírás után a kurzor a beírt hivatkozás mögé kerül, még a következő leütés előtt.
+  const pendingCaret = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    if (pendingCaret.current === null) return;
+    ref.current?.setSelectionRange(pendingCaret.current, pendingCaret.current);
+    pendingCaret.current = null;
+  }, [text, ref]);
+
+  /** Igaz, ha a billentyűt a javaslatlista kezelte. */
+  const onKeyDown = (e: React.KeyboardEvent): boolean => {
+    if (!items.length || !token) return false;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      setActive((a) => (a + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length);
+    } else if (e.key === 'Enter' || e.key === 'Tab') {
+      pick(items[active]!);
+    } else if (e.key === 'Escape') {
+      setDismissed(token.start);
+    } else {
+      return false;
+    }
+    e.preventDefault();
+    return true;
+  };
+
+  const list = items.length ? (
+    <ul className="results typeahead">
+      {items.map((n, i) => (
+        <li key={n.id}>
+          <button className={i === active ? 'active' : ''} onMouseDown={(e) => e.preventDefault()} onClick={() => pick(n)}>
+            <span className={`chip small type-${chipType(n)}`}>
+              <span className="chip-title">{title(n)}</span>
+            </span>
+          </button>
+        </li>
+      ))}
+    </ul>
+  ) : null;
+
+  const onSelect = (e: React.SyntheticEvent<HTMLTextAreaElement>) => setCaret(e.currentTarget.selectionStart);
+  /** Az adott típus már betöltött címei (a parancs-tipphez: meglévőt linkel-e). */
+  const known = (type: NodeType) => (lists[type] ?? []).map((n) => title(n));
+  return { list, onKeyDown, onSelect, known };
+}
+
 /** commandDay: ha megadjuk (típus nélküli node rögzítésének napja), a parancs-tippet is mutatja. */
 function Editor({ initial, onSave, onCancel, commandDay }: { initial: string; onSave: (text: string) => Promise<void>; onCancel: () => void; commandDay?: string }) {
   const [text, setText] = useState(initial);
-  const hint = commandDay ? commandHint(text, commandDay, 'Mentéskor') : null;
   const [busy, setBusy] = useState(false);
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const ta = useTypeahead(text, setText, ref);
+  // Szerkesztéskor a parancs a node-ot alakítja elemmé, meglévőt nem linkel (nodes.ts, updateNode).
+  const hint = commandDay ? commandHint(text, commandDay, 'Mentéskor', () => []) : null;
   const submit = async () => {
     if (!text.trim() || busy) return;
     setBusy(true);
@@ -657,12 +749,27 @@ function Editor({ initial, onSave, onCancel, commandDay }: { initial: string; on
     }
   };
   const onKey = (e: KeyboardEvent) => {
+    if (ta.onKeyDown(e)) return;
     if (e.key === 'Escape') onCancel();
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) void submit();
   };
   return (
     <div className="editor">
-      <textarea value={text} onChange={(e) => setText(e.target.value)} onKeyDown={onKey} autoFocus rows={Math.max(2, text.split('\n').length)} />
+      <div className="ta-wrap">
+        <textarea
+          ref={ref}
+          value={text}
+          onChange={(e) => {
+            setText(e.target.value);
+            ta.onSelect(e);
+          }}
+          onSelect={ta.onSelect}
+          onKeyDown={onKey}
+          autoFocus
+          rows={Math.max(2, text.split('\n').length)}
+        />
+        {ta.list}
+      </div>
       {hint && <p className="hint editor-hint">{hint}</p>}
       <div className="row">
         <button onClick={() => void submit()} disabled={busy || !text.trim()}>
@@ -850,24 +957,33 @@ function Capture(props: {
     }
   };
 
-  const hint = commandHint(text, localDay(new Date()), 'Enterre');
+  const ta = useTypeahead(text, setText, props.inputRef);
+  const hint = commandHint(text, localDay(new Date()), 'Enterre', ta.known);
 
   return (
     <>
-      <textarea
-        ref={props.inputRef}
-        className="capture"
-        rows={Math.min(8, Math.max(1, text.split('\n').length))}
-        value={text}
-        placeholder={`Új bejegyzés ide: ${props.target} – Enter ment, Shift+Enter új sor`}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-            e.preventDefault();
-            void submit();
-          }
-        }}
-      />
+      <div className="ta-wrap">
+        <textarea
+          ref={props.inputRef}
+          className="capture"
+          rows={Math.min(8, Math.max(1, text.split('\n').length))}
+          value={text}
+          placeholder={`Új bejegyzés ide: ${props.target} – Enter ment, Shift+Enter új sor`}
+          onChange={(e) => {
+            setText(e.target.value);
+            ta.onSelect(e);
+          }}
+          onSelect={ta.onSelect}
+          onKeyDown={(e) => {
+            if (ta.onKeyDown(e)) return;
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              void submit();
+            }
+          }}
+        />
+        {ta.list}
+      </div>
       {hint && <p className="hint capture-hint">{hint}</p>}
     </>
   );

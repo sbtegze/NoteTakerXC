@@ -41,7 +41,9 @@ Ez a hét kérdés az MVP mércéje: valódi meetingek után mindegyikre legfelj
 - **Parancs:** a bejegyzés első sorában `/meeting cím` vagy `/téma` (`/tema`) `cím` -> az adott típusú elem
   „cím ÉÉÉÉ-HH-NN” névvel (a rögzítés napja), a további sorok a szövegébe. Oda kerül, ahová írtuk; a nyitott
   meetinghez nem kapcsolódik. Szerkesztéskor is hat, ha a node-nak még nincs típusa. Ismeretlen parancs sima
-  szöveg. A szerver ismeri fel; a felület a mező alatt előre mutatja, mi lesz belőle.
+  szöveg. A szerver ismeri fel; a felület a mező alatt előre mutatja, mi lesz belőle. Ha új bejegyzésnél a cím
+  (a dátummal együtt, kisbetű-nagybetűtől függetlenül) egy meglévő ilyen elemé, nem jön létre új: a meglévő
+  az aktuális node alá is bekerül (a saját alárendeltje alá nem), az első sor alatti szöveg pedig alá.
 - **Egy közös térkép**, munkaterületek nélkül. A node és a kapcsolat mindig közös.
 - **Nincs nyitó node:** a szülő nélküli node legfelső szintű (pl. egy-egy meeting), felfelé nem kapcsolódik.
   A kezdőlap a legfelső szintű node-ok listája, a legújabb elöl, ember és jegy nélkül.

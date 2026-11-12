@@ -24,6 +24,9 @@ fut, és mentéskor azonnal frissül).
 - **Rögzítés:** a középen álló node alatti mezőbe írsz, Enter ment. A `#1234`, a nevek és a dátumok maguktól kiemelődnek.
 - **Középre állítás:** bármelyik címkére vagy kiemelt szövegrészre kattintva az áll középre. Fent az útvonal visszavisz.
 - **Kezdőlap (⌂):** a legfelső szintű node-ok, a legújabb elöl. A fenti mezőbe írva új legfelső szintű node jön létre.
+- **Javaslatok gépelés közben:** `@` után a meglévő emberek, `#` után a jegyek, az első sorban `/meeting ` vagy
+  `/téma ` után a meetingek, témák. ↑/↓ választ, Enter vagy Tab beírja, Esc bezárja. Ha a `/meeting cím` egy
+  meglévőt nevez meg, nem jön létre új: a meglévő kerül az aktuális node alá.
 - **Gyors listák:** a fejlécben az Emberek, Jegyek, Meetingek, Témák linkre kattintva lenyílik az összes ilyen node.
 - **Keresés:** Ctrl+K. Ha nincs találat, az Enter új, legfelső szintű node-ot hoz létre.
 - **Emberek:** írd a szövegbe így: `@Név` (többtagú is lehet: `@Mátrai Peti`). Ha még nincs ilyen ember, létrejön,

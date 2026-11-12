@@ -88,6 +88,37 @@ describe('rögzítés', () => {
     expect(res.json().node.content).toBe(`${today} ma később kezd, ${tomorrow.toISOString().slice(0, 10)} holnap is`);
   });
 
+  it('a meglévő meetinget nem hozza létre újra, hanem az aktuális node alá linkeli', async () => {
+    const today = localDate();
+    const first = await create({ content: 'első helye' });
+    const meeting = (await post({ content: '/meeting Linkelt workshop', parentId: first.id })).json().node;
+    const second = await create({ content: 'második helye' });
+
+    // Dátum nélkül (ma) és a teljes címmel is ugyanaz; kis- és nagybetű nem számít.
+    const res = await post({ content: '/meeting linkelt workshop', parentId: second.id });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().node.id).toBe(meeting.id);
+    const again = await post({ content: `/meeting Linkelt workshop ${today}\nott: jegyzet`, parentId: second.id });
+    expect(again.json().node.id).toBe(meeting.id);
+
+    const same = await db.query(`SELECT count(*)::int AS n FROM nodes WHERE content = $1`, [`Linkelt workshop ${today}`]);
+    expect(same.rows[0].n).toBe(1);
+    expect(await parentsOf(meeting.id)).toEqual(['első helye', 'második helye']);
+    // Az első sor alatti szöveg a meglévő meeting alá kerül.
+    const below = await db.query(
+      `SELECT n.content FROM edges e JOIN nodes n ON n.id = e.target_id WHERE e.source_id = $1`,
+      [meeting.id],
+    );
+    expect(below.rows.map((r) => r.content)).toEqual(['ott: jegyzet']);
+  });
+
+  it('a meglévő meetinget nem linkeli a saját alárendeltje alá', async () => {
+    const meeting = (await post({ content: '/meeting Körös workshop' })).json().node;
+    const inside = await create({ content: 'benne', parentId: meeting.id });
+    const res = await post({ content: '/meeting Körös workshop', parentId: inside.id });
+    expect(res.statusCode).toBe(400);
+  });
+
   it('ha a címben számmal írt dátum van, nem kerül mögé még egy; a szöveges nap nem számít', async () => {
     const today = localDate();
     expect((await post({ content: '/meeting ERP technikai státusz 2026-11-10' })).json().node.content).toBe(

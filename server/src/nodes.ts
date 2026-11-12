@@ -223,24 +223,81 @@ export function createNode(db: Db, userId: string, input: CreateNodeInput) {
     if (parentId) await requireNode(tx, parentId);
     if (contextId) await requireNode(tx, contextId);
 
-    const { rows } = await tx.query(
-      `INSERT INTO nodes (content, type, aliases, created_by, updated_by) VALUES ($1, $2, $3, $4, $4) RETURNING ${NODE_COLS}`,
-      [content, type ?? null, input.aliases ?? [], userId],
-    );
-    const node: NodeRow = rows[0];
-
-    for (const source of new Set([parentId, contextId])) {
-      if (!source) continue;
-      await tx.query(`INSERT INTO edges (source_id, target_id, kind, created_by) VALUES ($1, $2, 'unsorted', $3)`, [
-        source,
-        node.id,
-        userId,
-      ]);
+    // A már meglévő meetinget vagy témát nem hozzuk létre újra, hanem ide linkeljük.
+    if (command) {
+      const [first = '', ...rest] = content.split('\n');
+      const { rows } = await tx.query(
+        `SELECT ${NODE_COLS} FROM nodes
+         WHERE type = $1 AND deleted_at IS NULL AND lower(split_part(content, E'\\n', 1)) = lower($2)
+         ORDER BY created_at LIMIT 1`,
+        [type, first],
+      );
+      if (rows[0]) return linkExisting(tx, userId, rows[0], parentId, rest.join('\n').trim());
     }
-    const createdPeople = await createTaggedPeople(tx, userId, node, await loadContext(tx));
-    if (node.type === 'person' || createdPeople) await reindexAll(tx, userId);
-    return { node, spans: await applyRecognition(tx, userId, node, await loadContext(tx)) };
+    return insertNode(tx, userId, content, type, input.aliases ?? [], [parentId, contextId]);
   });
+}
+
+/** Új node a szülőkhöz kapcsolva, a felismeréssel együtt. */
+async function insertNode(
+  tx: Tx,
+  userId: string,
+  content: string,
+  type: string | null | undefined,
+  aliases: string[],
+  parents: (string | undefined)[],
+) {
+  const { rows } = await tx.query(
+    `INSERT INTO nodes (content, type, aliases, created_by, updated_by) VALUES ($1, $2, $3, $4, $4) RETURNING ${NODE_COLS}`,
+    [content, type ?? null, aliases, userId],
+  );
+  const node: NodeRow = rows[0];
+
+  for (const source of new Set(parents)) {
+    if (!source) continue;
+    await tx.query(`INSERT INTO edges (source_id, target_id, kind, created_by) VALUES ($1, $2, 'unsorted', $3)`, [
+      source,
+      node.id,
+      userId,
+    ]);
+  }
+  const createdPeople = await createTaggedPeople(tx, userId, node, await loadContext(tx));
+  if (node.type === 'person' || createdPeople) await reindexAll(tx, userId);
+  return { node, spans: await applyRecognition(tx, userId, node, await loadContext(tx)) };
+}
+
+/** Igaz, ha a `node` a `root` alatt van (bármilyen mélyen). */
+async function isBelow(tx: Tx, root: string, node: string): Promise<boolean> {
+  const { rowCount } = await tx.query(
+    `WITH RECURSIVE down(node_id) AS (
+       SELECT target_id FROM edges WHERE source_id = $1 AND kind IN ('unsorted', 'belongs_to')
+       UNION
+       SELECT e.target_id FROM edges e JOIN down d ON e.source_id = d.node_id WHERE e.kind IN ('unsorted', 'belongs_to')
+     )
+     SELECT 1 FROM down WHERE node_id = $2`,
+    [root, node],
+  );
+  return !!rowCount;
+}
+
+/**
+ * A meglévő elem (meeting, téma) a `parentId` alá is bekerül; a régi helyén is megmarad. Az első sor alatti
+ * szöveg (`body`) új bejegyzésként a meglévő elem alá kerül.
+ */
+async function linkExisting(tx: Tx, userId: string, existing: NodeRow, parentId: string | undefined, body: string) {
+  if (parentId) {
+    if (parentId === existing.id || (await isBelow(tx, existing.id, parentId))) {
+      throw new HttpError(400, 'Ez az elem a saját alárendeltje alá nem linkelhető');
+    }
+    await tx.query(
+      `INSERT INTO edges (source_id, target_id, kind, created_by)
+       SELECT $1, $2, 'unsorted', $3
+       WHERE NOT EXISTS (SELECT 1 FROM edges WHERE source_id = $1 AND target_id = $2 AND kind IN ('unsorted', 'belongs_to'))`,
+      [parentId, existing.id, userId],
+    );
+  }
+  if (body) await insertNode(tx, userId, body, null, [], [existing.id]);
+  return { node: existing, spans: spansOf(existing, await loadContext(tx)) };
 }
 
 export interface UpdateNodeInput {
@@ -335,16 +392,7 @@ export function moveNode(db: Db, userId: string, id: string, from: unknown, to: 
     await requireNode(tx, id);
     await requireNode(tx, to);
     if (to === id) throw new HttpError(400, 'Önmaga alá nem helyezhető');
-    const { rowCount: below } = await tx.query(
-      `WITH RECURSIVE down(node_id) AS (
-         SELECT target_id FROM edges WHERE source_id = $1 AND kind IN ('unsorted', 'belongs_to')
-         UNION
-         SELECT e.target_id FROM edges e JOIN down d ON e.source_id = d.node_id WHERE e.kind IN ('unsorted', 'belongs_to')
-       )
-       SELECT 1 FROM down WHERE node_id = $2`,
-      [id, to],
-    );
-    if (below) throw new HttpError(400, 'A saját alárendeltje alá nem helyezhető');
+    if (await isBelow(tx, id, to)) throw new HttpError(400, 'A saját alárendeltje alá nem helyezhető');
 
     const removed = await tx.query(
       `DELETE FROM edges WHERE source_id = $1 AND target_id = $2 AND kind IN ('unsorted', 'belongs_to')`,

@@ -488,6 +488,21 @@ button:disabled {
   border-color: var(--accent);
 }
 
+.ta-wrap {
+  position: relative;
+}
+
+.ta-wrap textarea {
+  display: block;
+}
+
+.results.typeahead {
+  right: auto;
+  min-width: 260px;
+  max-height: 40vh;
+  z-index: 10;
+}
+
 .capture-hint {
   margin: -8px 0 0;
 }
