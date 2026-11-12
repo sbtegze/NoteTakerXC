@@ -529,6 +529,12 @@ button:disabled {
   color: var(--ticket);
 }
 
+.center h1 .span {
+  border-radius: 999px;
+  padding: 0 0.45em;
+  font-weight: inherit;
+}
+
 /* ---------- bejegyzések ---------- */
 
 .entries ul {

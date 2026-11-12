@@ -382,7 +382,7 @@ function Center(props: {
     await onChanged();
   };
 
-  const [first, ...rest] = node.content.split('\n');
+  const [first = '', ...rest] = node.content.split('\n');
   const body = rest.join('\n').trim();
 
   return (
@@ -391,7 +391,13 @@ function Center(props: {
         <Editor initial={node.content} onSave={(content) => update({ content })} onCancel={() => setEditing(false)} />
       ) : (
         <>
-          <h1>{first}</h1>
+          <h1>
+            <RichText
+              node={{ content: first, spans: node.spans.filter((s) => s.end <= first.length) }}
+              onPick={props.onPick}
+              nodes={props.nodes}
+            />
+          </h1>
           {body && (
             <p className="body">
               <RichText node={{ ...node, content: node.content }} onPick={props.onPick} nodes={props.nodes} />
