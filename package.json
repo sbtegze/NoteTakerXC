@@ -1,0 +1,11 @@
+{
+  "name": "notetakerxc",
+  "private": true,
+  "workspaces": ["server"],
+  "scripts": {
+    "migrate": "npm run migrate -w server",
+    "create-user": "npm run create-user -w server --",
+    "dev:server": "npm run dev -w server",
+    "test": "npm test -w server"
+  }
+}
