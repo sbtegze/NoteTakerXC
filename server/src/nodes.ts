@@ -366,6 +366,24 @@ export function moveNode(db: Db, userId: string, id: string, from: unknown, to: 
 const brief = (r: NodeRow) => ({ id: r.id, content: r.content, type: r.type, ticket_no: r.ticket_no });
 
 /**
+ * Egy típus összes node-ja a fejléc gyors linkjeihez: az emberek név szerint, a jegyek szám szerint,
+ * a meetingek és a témák a legújabb elöl.
+ */
+export async function listByType(db: Db, type: unknown) {
+  if (typeof type !== 'string' || !(NODE_TYPES as readonly string[]).includes(type)) {
+    throw new HttpError(400, 'Ismeretlen típus');
+  }
+  const { rows } = await db.query(
+    `SELECT ${NODE_COLS} FROM nodes WHERE type = $1 AND deleted_at IS NULL
+     ORDER BY ticket_no NULLS LAST, created_at DESC`,
+    [type],
+  );
+  const nodes = rows.map((r) => ({ ...brief(r), created_at: r.created_at as Date }));
+  if (type === 'person') nodes.sort((a, b) => a.content.localeCompare(b.content, 'hu'));
+  return { nodes };
+}
+
+/**
  * A kezdőlap: a legfelső szintű (szülő nélküli) node-ok, a legújabb elöl. Az ember és a jegy
  * nem kerül ide, bár nekik sincs szülőjük: őket a keresőből és az említésekből érjük el.
  */

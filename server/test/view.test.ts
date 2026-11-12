@@ -180,6 +180,26 @@ describe('középre állítás', () => {
   });
 });
 
+describe('típus szerinti lista', () => {
+  it('az emberek név szerint, a jegyek szám szerint, a meetingek a legújabb elöl', async () => {
+    const list = async (type: string) => titles((await get(`/api/nodes?type=${type}`)).nodes);
+    expect(await list('person')).toEqual([...(await list('person'))].sort((a, b) => a.localeCompare(b, 'hu')));
+    expect(await list('person')).toEqual(expect.arrayContaining(['István', 'Szabi']));
+
+    await create({ content: '#99 régi jegy' });
+    const tickets = await list('ticket');
+    expect(tickets.indexOf('#99')).toBeLessThan(tickets.indexOf('#1234'));
+
+    const older = await create({ content: 'régebbi meeting', type: 'meeting' });
+    const newer = await create({ content: 'újabb meeting', type: 'meeting' });
+    const meetings = await list('meeting');
+    expect(meetings.indexOf('újabb meeting')).toBeLessThan(meetings.indexOf('régebbi meeting'));
+    for (const n of [older, newer]) await db.query('DELETE FROM nodes WHERE id = $1', [n.id]);
+
+    expect((await app.inject({ url: '/api/nodes?type=valami', cookies })).statusCode).toBe(400);
+  });
+});
+
 describe('típus és becenév', () => {
   it('az @-tal létrejött embert a korábbi szövegekben és a becenevén is felismeri', async () => {
     await create({ content: 'Gézának szólni kell a #1234 miatt', parentId: meeting.id });

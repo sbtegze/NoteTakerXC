@@ -230,6 +230,7 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
             </span>
           ))}
         </nav>
+        <QuickLists onPick={go} onError={fail} />
         <Search onPick={go} onError={fail} />
         <span className="user">
           {user.display_name}
@@ -321,6 +322,69 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
         !error && <p className="status">Betöltés…</p>
       )}
     </div>
+  );
+}
+
+/** A fejléc gyors linkjei: egy típusra kattintva lenyílik az összes ilyen node listája. */
+function QuickLists({ onPick, onError }: { onPick: (n: Brief) => void; onError: (e: unknown) => void }) {
+  const [open, setOpen] = useState<NodeType | null>(null);
+  const [nodes, setNodes] = useState<Brief[] | null>(null);
+  const ref = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setNodes(null);
+    api
+      .byType(open)
+      .then((r) => setNodes(r.nodes))
+      .catch(onError);
+    // Mellékattintásra vagy Esc-re bezárul.
+    const onDown = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && setOpen(null);
+    const onKey = (e: globalThis.KeyboardEvent) => e.key === 'Escape' && setOpen(null);
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open, onError]);
+
+  return (
+    <nav className="quick" aria-label="Gyors listák" ref={ref}>
+      {GROUPS.flatMap(([type, label]) =>
+        type ? (
+          <span key={type} className="quick-item">
+            <button
+              className={`link${open === type ? ' on' : ''}`}
+              aria-expanded={open === type}
+              onClick={() => setOpen(open === type ? null : type)}
+            >
+              {label}
+            </button>
+            {open === type && (
+              <ul className="results">
+                {nodes === null && <li className="hint">Betöltés…</li>}
+                {nodes?.length === 0 && <li className="hint">Még nincs ilyen.</li>}
+                {nodes?.map((n) => (
+                  <li key={n.id}>
+                    <button
+                      onClick={() => {
+                        setOpen(null);
+                        onPick(n);
+                      }}
+                    >
+                      <span className={`chip small type-${chipType(n)}`}>
+                        <span className="chip-title">{title(n)}</span>
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </span>
+        ) : [],
+      )}
+    </nav>
   );
 }
 

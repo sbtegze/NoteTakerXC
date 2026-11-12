@@ -106,6 +106,7 @@ export const api = {
   me: () => call<{ user: User }>('GET', '/api/me'),
   login: (email: string, password: string) => call<{ user: User }>('POST', '/api/login', { email, password }),
   logout: () => call('POST', '/api/logout', {}),
+  byType: (type: NodeType) => call<{ nodes: (Brief & { created_at: string })[] }>('GET', `/api/nodes?type=${type}`),
   roots: () => call<{ roots: (Brief & { created_at: string })[] }>('GET', '/api/roots'),
   /** depth: a bejegyzések alatti további szintek száma (többszintű nézet). */
   view: (id: string, depth = 0) => call<View>('GET', `/api/nodes/${id}${depth ? `?melyseg=${depth}` : ''}`),

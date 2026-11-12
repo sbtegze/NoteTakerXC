@@ -9,6 +9,7 @@ import {
   deleteNode,
   getNeighborhood,
   getRoots,
+  listByType,
   moveNode,
   HttpError,
   searchNodes,
@@ -124,6 +125,9 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
   app.post<{ Params: { id: string }; Body: { from?: unknown; to?: unknown } }>('/api/nodes/:id/move', async (req) =>
     moveNode(db, req.user.id, req.params.id, req.body?.from, req.body?.to),
   );
+
+  // A fejléc gyors linkjei: egy típus összes node-ja.
+  app.get<{ Querystring: { type?: string } }>('/api/nodes', async (req) => listByType(db, req.query.type));
 
   // A kezdőlap: a legfelső szintű node-ok.
   app.get('/api/roots', async () => getRoots(db));

@@ -327,8 +327,42 @@ button:disabled {
 }
 
 .crumb.home {
-  font-size: 1.1rem;
+  font-size: 1.6rem;
   line-height: 1;
+  padding: 0 4px 2px;
+}
+
+/* ---------- gyors listák ---------- */
+
+.quick {
+  display: flex;
+  gap: 12px;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.quick-item {
+  position: relative;
+}
+
+.quick .link {
+  text-decoration: none;
+}
+
+.quick .link:hover,
+.quick .link.on {
+  text-decoration: underline;
+}
+
+.quick .results {
+  left: auto;
+  right: auto;
+  min-width: 240px;
+  z-index: 10;
+}
+
+.quick .results .hint {
+  padding: 6px 8px;
 }
 
 /* ---------- térkép ---------- */
