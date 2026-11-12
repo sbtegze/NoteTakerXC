@@ -546,6 +546,15 @@ button:disabled {
   padding: 9px 12px;
 }
 
+.entry.clickable .entry-head,
+.entry.clickable .entry-text {
+  cursor: pointer;
+}
+
+.entry.clickable:hover {
+  border-color: var(--accent);
+}
+
 .entry-head {
   display: flex;
   flex-wrap: wrap;

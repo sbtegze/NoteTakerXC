@@ -553,8 +553,15 @@ function EntryRow({ entry, known, onPick, onChanged, onError }: { entry: Entry; 
     await onChanged();
   };
 
+  // Kattintásra megnyílik; a gombok, a szerkesztő, a kommentek és a szövegkijelölés kivételével.
+  const open = (e: React.MouseEvent) => {
+    if (editing || (e.target as HTMLElement).closest('button, a, textarea, input, .notes')) return;
+    if (window.getSelection()?.toString()) return;
+    onPick(entry);
+  };
+
   return (
-    <li className="entry">
+    <li className={editing ? 'entry' : 'entry clickable'} onClick={open}>
       <div className="entry-head">
         <time dateTime={entry.created_at}>{fmtStamp(entry.created_at)}</time>
         {entry.contexts.map((c) => (
