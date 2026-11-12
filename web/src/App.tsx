@@ -410,11 +410,27 @@ function Center(props: {
       )}
       <div className="row meta">
         <label>
-          Típus
+          Ez a node:
           <select
             value={node.type ?? ''}
             disabled={node.is_inbox || node.type === 'ticket'}
-            onChange={(e) => void update({ type: (e.target.value || null) as NodeType | null })}
+            title="Magát ezt a node-ot jelöli meg; egy emberre a szövegben @Név formában hivatkozz."
+            onChange={(e) => {
+              const next = (e.target.value || null) as NodeType | null;
+              // Egy mondatot ritkán akarunk emberré tenni: az első sor minden szava névvé válna.
+              const sentence = first!.trim().split(/\s+/).length > 2;
+              if (
+                next === 'person' &&
+                sentence &&
+                !window.confirm(
+                  `„${first}” maga lesz egy ember, és a program az első sor minden szavát a nevének tekinti.\n\n` +
+                    'Ha csak említeni akarsz valakit, írd a szövegbe így: @Név.\n\nBiztosan emberré teszed?',
+                )
+              ) {
+                return;
+              }
+              void update({ type: next });
+            }}
           >
             <option value="">–</option>
             {(Object.keys(TYPE_LABEL) as NodeType[]).map((t) => (
@@ -428,6 +444,7 @@ function Center(props: {
           <label>
             Becenevek
             <input
+              title="Ezekre a nevekre is ráismer a szövegekben, ragozva is."
               value={aliases}
               placeholder="pl. Szabolcs, Szabika"
               onChange={(e) => setAliases(e.target.value)}
