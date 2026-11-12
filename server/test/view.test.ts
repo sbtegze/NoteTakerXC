@@ -49,6 +49,30 @@ afterAll(async () => {
 });
 
 describe('középre állítás', () => {
+  it('az ősök a gyökérig, mindegyik a saját szüleivel; a kör nem akasztja meg', async () => {
+    const entry = (await get(`/api/nodes/${meeting.id}`)).below.find((n: Brief) => n.content.startsWith('István jövő'));
+    const sub = await create({ content: 'Al-bejegyzés', parentId: entry.id });
+    const view = await get(`/api/nodes/${sub.id}`);
+    const byId = new Map(view.ancestors.map((a: Brief & { parent_ids: string[] }) => [a.id, a]));
+    const chain = (id: string): string[] => {
+      const a = byId.get(id) as (Brief & { parent_ids: string[] }) | undefined;
+      return a ? [a.content, ...a.parent_ids.flatMap(chain)] : [];
+    };
+    expect(titles(view.parents)).toEqual(['István jövő héten nincs']);
+    expect(chain(entry.id)).toEqual(['István jövő héten nincs', 'Heti egyeztetés 11.10.', 'Bejövő']);
+
+    // Kör: a meeting az al-bejegyzés alá is bekerül.
+    const { id: userId } = (await db.query('SELECT id FROM users LIMIT 1')).rows[0];
+    await db.query(
+      `INSERT INTO edges (source_id, target_id, kind, created_by) VALUES ($1, $2, 'belongs_to', $3)`,
+      [sub.id, meeting.id, userId],
+    );
+    const res = await app.inject({ url: `/api/nodes/${sub.id}`, cookies });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().ancestors.map((a: Brief) => a.content)).toContain('Al-bejegyzés');
+    await db.query(`DELETE FROM edges WHERE source_id = $1 AND target_id = $2`, [sub.id, meeting.id]);
+  });
+
   it('a kezdőpont a Bejövő, alatta a közvetlenül rögzített node-ok', async () => {
     const { id } = await get('/api/home');
     const view = await get(`/api/nodes/${id}`);

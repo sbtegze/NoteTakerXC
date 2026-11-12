@@ -26,6 +26,10 @@ Ez a hét kérdés az MVP mércéje: valódi meetingek után mindegyikre legfelj
   A `@név` mindig név (kisbetűvel is); ha még nincs ilyen ember, létrehozza, mint a `#1234` a jegyet. Ismeretlen
   névnél csak a hosszabb ragot vágja le (`@Gézának` → Géza), a rövidet (-t, -n, -ra, -nál) nem, mert az gyakran
   a név része (Bálint, Zoltán, Klára, Kornél). A kommentben a `@név` sem hoz létre embert.
+  Többtagú név (Mátrai Peti): egészben ismeri fel, csak az utolsó tag ragozott; a tagjai külön is jelentik az
+  embert, ha csak egyre illenek (két Petinél a „Peti” magában nem dönt). Az ismeretlen `@név` mögötti nagybetűs,
+  nem csupa nagybetűs szavak is a névhez tartoznak, legfeljebb három tagig (`@Ákos FDD` → Ákos); az ismert
+  teljes név ennél erősebb.
 - **Dátum:** év nélkül a rögzítés napjához legközelebbi előfordulás. A relatív dátum a node `created_at` napjához
   képest értendő.
 - **Tag = node:** nincs külön tag vagy csoport; az ember, a jegy, a meeting is node, `type` mezővel.

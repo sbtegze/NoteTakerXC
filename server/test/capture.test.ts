@@ -155,6 +155,20 @@ describe('rögzítés', () => {
     expect(await edgesFrom(later.id)).toEqual(['mention:Géza']);
   });
 
+  it('a többtagú @név egy embert hoz létre, a teljes névvel és a tagjaival is felismerhetően', async () => {
+    const earlier = await create({ content: 'Mátrai Petinek szóltam' });
+    const res = await post({ content: '@Mátrai Peti átnézi, @Mátrai Petit is kérdezd' });
+    expect(res.json().spans.map((s: { text: string }) => s.text)).toEqual(['@Mátrai Peti', '@Mátrai Petit']);
+    const people = await db.query(`SELECT content FROM nodes WHERE type = 'person' AND content LIKE 'Mátrai%'`);
+    expect(people.rows).toEqual([{ content: 'Mátrai Peti' }]);
+    expect(await edgesFrom(earlier.id)).toEqual(['mention:Mátrai Peti']);
+
+    // Egy másik Peti mellett a „Peti” magában nem dönt, a „Mátrai” igen.
+    await create({ content: '@Gulyás Peti is jön' });
+    const later = await create({ content: 'Peti és Mátrai' });
+    expect(await edgesFrom(later.id)).toEqual(['mention:Mátrai Peti']);
+  });
+
   it('szerkesztéskor is létrejön az új @-os ember', async () => {
     const node = await create({ content: 'meg kell kérdezni' });
     await patch(node.id, { content: 'meg kell kérdezni @Hannától', version: node.version });

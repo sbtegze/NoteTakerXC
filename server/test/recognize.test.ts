@@ -92,6 +92,55 @@ describe('@név', () => {
   });
 });
 
+describe('többtagú név', () => {
+  const people2 = [
+    { id: 'matrai', names: ['Mátrai Peti'] },
+    { id: 'gulyas', names: ['Gulyás Peti'] },
+  ];
+  const tagged = (text: string) =>
+    recognize(text, { today, people: people2 }).map((s) =>
+      s.kind === 'person' ? [s.text, s.personId ?? `új:${s.newName}`] : [s.text, s.kind],
+    );
+
+  it('a teljes nevet egyben ismeri fel, az utolsó tag ragozva is lehet; a közös tag magában nem dönt', () => {
+    expect(tagged('Mátrai Petinek szóltam, Gulyás Peti ráér, Peti nem tudja, Mátrai igen')).toEqual([
+      ['Mátrai Petinek', 'matrai'],
+      ['Gulyás Peti', 'gulyas'],
+      ['Mátrai', 'matrai'],
+    ]);
+  });
+
+  it('@-tal is, a pill a teljes nevet fedi', () => {
+    expect(tagged('@Mátrai Petivel és @gulyás Peti')).toEqual([
+      ['@Mátrai Petivel', 'matrai'],
+      ['@gulyás Peti', 'gulyas'],
+    ]);
+  });
+
+  it('az ismeretlen @név a következő nagybetűs szavakkal együtt új ember, legfeljebb három tagig', () => {
+    expect(tagged('@Kiss Anna Máriának szólt, @Ákos FDD tréninget tart, @Egy Kettő Három Négy')).toEqual([
+      ['@Kiss Anna Máriának', 'új:Kiss Anna Mária'],
+      ['@Ákos', 'új:Ákos'],
+      ['@Egy Kettő Három', 'új:Egy Kettő Három'],
+    ]);
+  });
+
+  it('ha a @ után hosszabb név áll, mint az ismert, új ember lesz; sortörésen át nem fűz össze', () => {
+    expect(tagged('@Mátrai Gergő jön')).toEqual([['@Mátrai Gergő', 'új:Mátrai Gergő']]);
+    // A teljes ismert név viszont nyer: a mögötte álló nagybetűs szó nem a név része.
+    expect(tagged('@Mátrai Petinek Gulyás Peti szólt')).toEqual([
+      ['@Mátrai Petinek', 'matrai'],
+      ['Gulyás Peti', 'gulyas'],
+    ]);
+    // A két Petire illő „@Peti” nem hoz létre harmadikat.
+    expect(tagged('@Peti mondta')).toEqual([]);
+    expect(tagged('@Ákos\nMátrai')).toEqual([
+      ['@Ákos', 'új:Ákos'],
+      ['Mátrai', 'matrai'],
+    ]);
+  });
+});
+
 describe('dátum', () => {
   it('évvel és év nélkül', () => {
     expect(one('2026-11-20')).toEqual(['2026-11-20']);

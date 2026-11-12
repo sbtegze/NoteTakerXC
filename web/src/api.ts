@@ -64,6 +64,8 @@ export interface Connected extends Brief {
 export interface View {
   center: Detailed;
   parents: Brief[];
+  /** Minden ős a gyökérig, a saját szülei azonosítójával. */
+  ancestors: (Brief & { parent_ids: string[] })[];
   below: Entry[];
   connected: Connected[];
 }

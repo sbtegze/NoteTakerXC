@@ -60,8 +60,9 @@ export async function loadContext(q: Queryable): Promise<RecognitionContext> {
   return {
     people: people.rows.map((r) => ({
       id: r.id,
-      // A node első sorának szavai és a becenevek: "Kovács István" -> Kovács, István
-      names: [...(r.content.split('\n')[0] ?? '').split(/\s+/), ...r.aliases].filter((n: string) => n.length >= 2),
+      // A node első sora és a becenevek; a többtagú név tagjait ("Kovács István" -> Kovács, István)
+      // a felismerő maga bontja ki.
+      names: [(r.content.split('\n')[0] ?? '').trim(), ...r.aliases].filter((n: string) => n.length >= 2),
     })),
     tickets: new Map(tickets.rows.map((r) => [r.ticket_no, r.id])),
   };
@@ -288,6 +289,21 @@ export async function getNeighborhood(db: Db, id: string) {
     [id],
   );
 
+  // Az összes ős a gyökérig, mindegyik a saját szüleivel. A UNION a kört is lezárja.
+  const ancestors = await db.query(
+    `WITH RECURSIVE up(child_id, parent_id) AS (
+       SELECT target_id, source_id FROM edges WHERE target_id = $1 AND kind IN ('unsorted', 'belongs_to')
+       UNION
+       SELECT e.target_id, e.source_id FROM edges e JOIN up ON e.target_id = up.parent_id
+       WHERE e.kind IN ('unsorted', 'belongs_to')
+     )
+     SELECT ${N_COLS},
+       coalesce((SELECT array_agg(u.parent_id ORDER BY p.created_at) FROM up u JOIN nodes p ON p.id = u.parent_id
+                 WHERE u.child_id = n.id AND p.deleted_at IS NULL), '{}') AS parent_ids
+     FROM nodes n WHERE n.id IN (SELECT parent_id FROM up) AND n.deleted_at IS NULL`,
+    [id],
+  );
+
   // Alatta lévő node-ok és minden bejegyzés, ami említi – időrendben, egyszer.
   const below = await db.query(
     `SELECT ${N_COLS}, bool_or(e.source_id = $1) AS is_child, bool_or(e.kind = 'mention') AS is_mention
@@ -342,6 +358,7 @@ export async function getNeighborhood(db: Db, id: string) {
   return {
     center: detailed(center),
     parents: parents.rows.map(brief),
+    ancestors: ancestors.rows.map((r) => ({ ...brief(r), parent_ids: r.parent_ids as string[] })),
     below: below.rows.map((r) => ({
       ...detailed(r),
       is_child: r.is_child as boolean,

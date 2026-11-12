@@ -233,7 +233,7 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
         <main className="map" key={view.center.id}>
           <aside className="side">
             <h2>Ide tartozik</h2>
-            {view.parents.length ? <Chips nodes={view.parents} onPick={go} /> : <p className="empty">Nincs szülője</p>}
+            {view.parents.length ? <Ancestors view={view} onPick={go} /> : <p className="empty">Nincs szülője</p>}
           </aside>
 
           <section className="middle">
@@ -285,6 +285,34 @@ function Chips({ nodes, onPick, counts }: { nodes: (Brief & { mentions?: number 
         </li>
       ))}
     </ul>
+  );
+}
+
+/** Az ősök fája: a közvetlen szülők, alattuk beljebb a saját szüleik, egészen a gyökérig. */
+function Ancestors({ view, onPick }: { view: View; onPick: (n: Brief) => void }) {
+  const byId = new Map(view.ancestors.map((a) => [a.id, a]));
+  const branch = (ids: string[], seen: Set<string>): ReactNode => {
+    const shown = ids.filter((id) => byId.has(id) && !seen.has(id)); // a kör nem pörög körbe
+    if (!shown.length) return null;
+    return (
+      <ul className="tree">
+        {shown.map((id) => {
+          const a = byId.get(id)!;
+          return (
+            <li key={id}>
+              <button className={`chip type-${a.type ?? 'none'}`} onClick={() => onPick(a)} title={a.content}>
+                <span className="chip-title">{title(a)}</span>
+              </button>
+              {branch(a.parent_ids, new Set([...seen, id]))}
+            </li>
+          );
+        })}
+      </ul>
+    );
+  };
+  return branch(
+    view.parents.map((p) => p.id),
+    new Set([view.center.id]),
   );
 }
 

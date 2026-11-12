@@ -5,7 +5,7 @@
 
 export interface Person {
   id: string;
-  /** Nevek és becenevek, ahogy a szövegben előfordulhatnak (pl. "Szabi", "István"). */
+  /** Nevek és becenevek (pl. "Szabi", "Mátrai Peti"); a többtagú név tagjai külön is felismerhetők. */
   names: string[];
 }
 
@@ -199,31 +199,109 @@ export function baseName(word: string): string {
   return stem[0]!.toUpperCase() + stem.slice(1);
 }
 
-/** @név: kis- és nagybetűvel is név; ha még nincs ilyen ember, új jön létre. Az e-mail cím nem az. */
-function findTaggedPeople(text: string, people: Person[]): PersonSpan[] {
+interface Word {
+  text: string;
+  start: number;
+  end: number;
+}
+const wordsOf = (text: string): Word[] =>
+  [...text.matchAll(/\p{L}+/gu)].map((m) => ({ text: m[0], start: m.index!, end: m.index! + m[0].length }));
+/** A többtagú név tagjai között csak szóköz állhat; sortörés vagy írásjel nem. */
+const joined = (text: string, a: Word, b: Word) => /^[ \t]+$/.test(text.slice(a.end, b.start));
+
+/** A felismerhető névalakok: a teljes név (Mátrai Peti) és külön a tagjai (Mátrai, Peti). */
+interface NameForm {
+  personId: string;
+  parts: string[];
+  full: boolean;
+}
+function nameForms(people: Person[]): NameForm[] {
+  return people.flatMap((p) =>
+    p.names.flatMap((name) => {
+      const parts = name.split(/\s+/).filter(Boolean);
+      const own = parts.length ? [{ personId: p.id, parts, full: true }] : [];
+      if (parts.length < 2) return own;
+      return [...own, ...parts.filter((w) => w.length >= 2).map((w) => ({ personId: p.id, parts: [w], full: false }))];
+    }),
+  );
+}
+
+/** A szavak ugyanazt a nevet adják-e; csak az utolsó tag lehet ragozott (Mátrai Petinek). */
+function matchesForm(words: Word[], parts: string[]): boolean {
+  return (
+    words.length === parts.length &&
+    parts.every((p, k) => (k === parts.length - 1 ? matchesName(words[k]!.text, p) : words[k]!.text.toLowerCase() === p.toLowerCase()))
+  );
+}
+
+/**
+ * Az i. szótól kezdődő leghosszabb ismert név. personId null, ha több emberre is illik
+ * (a teljes névvel egyező ember elsőbbséget kap a tagra illővel szemben).
+ */
+function knownAt(text: string, words: Word[], i: number, forms: NameForm[]) {
+  const longest = Math.max(0, ...forms.map((f) => f.parts.length));
+  for (let len = Math.min(longest, words.length - i); len >= 1; len--) {
+    const ws = words.slice(i, i + len);
+    if (!ws.every((w, k) => k === 0 || joined(text, ws[k - 1]!, w))) continue;
+    const hits = forms.filter((f) => matchesForm(ws, f.parts));
+    if (!hits.length) continue;
+    const ids = (full: boolean) => [...new Set(hits.filter((h) => h.full === full).map((h) => h.personId))];
+    const [fullIds, partIds] = [ids(true), ids(false)];
+    const chosen = fullIds.length ? fullIds : partIds;
+    return { len, full: fullIds.length > 0, personId: chosen.length === 1 ? chosen[0]! : null };
+  }
+  return null;
+}
+
+const MAX_NEW_NAME_WORDS = 3;
+const capitalize = (w: string) => w[0]!.toUpperCase() + w.slice(1);
+
+/**
+ * @név: kis- és nagybetűvel is név; ha még nincs ilyen ember, új jön létre. Az e-mail cím nem az.
+ * Az ismeretlen névhez a mögötte álló nagybetűs (nem csupa nagybetűs) szavak is hozzátartoznak,
+ * legfeljebb három tagig: @Mátrai Peti, de @Ákos FDD -> Ákos.
+ */
+function findTaggedPeople(text: string, words: Word[], forms: NameForm[]): PersonSpan[] {
   const spans: PersonSpan[] = [];
   for (const m of text.matchAll(/(?<![\p{L}\d])@(\p{L}+)/gu)) {
-    const word = m[1]!;
-    const base = { kind: 'person' as const, start: m.index!, end: m.index! + m[0].length, text: m[0] };
-    const hits = people.filter((p) => p.names.some((n) => matchesName(word, n)));
-    if (hits.length === 1) spans.push({ ...base, personId: hits[0]!.id });
-    else if (hits.length === 0) spans.push({ ...base, newName: baseName(word) });
-    // Ha több emberre is illik, nem találgatunk.
+    const i = words.findIndex((w) => w.start === m.index! + 1);
+    let run = 1;
+    while (
+      run < MAX_NEW_NAME_WORDS &&
+      i + run < words.length &&
+      joined(text, words[i + run - 1]!, words[i + run]!) &&
+      /^\p{Lu}\p{Ll}/u.test(words[i + run]!.text)
+    ) {
+      run++;
+    }
+    const known = knownAt(text, words, i, forms);
+    const useKnown = known && (known.len >= run || known.full);
+    const len = useKnown ? known.len : run;
+    const [start, end] = [m.index!, words[i + len - 1]!.end];
+    const base = { kind: 'person' as const, start, end, text: text.slice(start, end) };
+    if (useKnown) {
+      // Ha több emberre is illik, nem találgatunk.
+      if (known.personId) spans.push({ ...base, personId: known.personId });
+    } else {
+      const ws = words.slice(i, i + run).map((w) => w.text);
+      spans.push({ ...base, newName: [...ws.slice(0, -1).map(capitalize), baseName(ws.at(-1)!)].join(' ') });
+    }
   }
   return spans;
 }
 
-function findPeople(text: string, people: Person[]): PersonSpan[] {
+function findPeople(text: string, words: Word[], forms: NameForm[]): PersonSpan[] {
   const spans: PersonSpan[] = [];
-  for (const m of text.matchAll(/\p{L}+/gu)) {
-    const word = m[0];
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i]!.text;
     // Csak nagybetűs szó lehet név, különben a "szabi" (szabadság) is Szabi lenne.
     if (word[0] !== word[0]!.toUpperCase() || word[0] === word[0]!.toLowerCase()) continue;
-    const hits = people.filter((p) => p.names.some((n) => matchesName(word, n)));
+    const known = knownAt(text, words, i, forms);
+    if (!known) continue;
+    const [start, end] = [words[i]!.start, words[i + known.len - 1]!.end];
     // Ha több emberre is illik, nem találgatunk.
-    if (hits.length === 1) {
-      spans.push({ kind: 'person', start: m.index!, end: m.index! + word.length, text: word, personId: hits[0]!.id });
-    }
+    if (known.personId) spans.push({ kind: 'person', start, end, text: text.slice(start, end), personId: known.personId });
+    i += known.len - 1;
   }
   return spans;
 }
@@ -233,11 +311,13 @@ function findPeople(text: string, people: Person[]): PersonSpan[] {
 export function recognize(text: string, opts: RecognizeOptions): Span[] {
   const spans: Span[] = [];
   const overlaps = (start: number, end: number) => spans.some((s) => start < s.end && end > s.start);
+  const words = wordsOf(text);
+  const forms = nameForms(opts.people ?? []);
 
   for (const m of text.matchAll(/#(\d{1,7})(?!\d)/g)) {
     spans.push({ kind: 'ticket', start: m.index!, end: m.index! + m[0].length, text: m[0], ticketNo: +m[1]! });
   }
-  spans.push(...findTaggedPeople(text, opts.people ?? []));
+  spans.push(...findTaggedPeople(text, words, forms));
   for (const d of findDates(text, opts.today)) {
     if (!overlaps(d.start, d.end)) spans.push({ kind: 'date', text: text.slice(d.start, d.end), ...d });
   }
@@ -249,7 +329,7 @@ export function recognize(text: string, opts: RecognizeOptions): Span[] {
       }
     }
   }
-  for (const p of findPeople(text, opts.people ?? [])) {
+  for (const p of findPeople(text, words, forms)) {
     if (!overlaps(p.start, p.end)) spans.push(p);
   }
   return spans.sort((a, b) => a.start - b.start);
