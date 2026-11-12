@@ -51,6 +51,10 @@ Ez a hét kérdés az MVP mércéje: valódi meetingek után mindegyikre legfelj
   későbbi privát jegyzethez van fenntartva. A kommentben a felismerés csak kiemel, kapcsolatot nem hoz létre.
 - **Jogosultság:** egyelőre nincs. Bejelentkezés kell, mert internet felé nyitott VPS-en fog futni.
 - **Napló:** minden változást az adatbázis triggerei írnak a `change_log` táblába; nem módosítható.
+- **Adatbázismotor:** a `.env` `DB_ENGINE` értéke: `json` (egy fájl, `JSON_DB_FILE`) vagy `postgres` (alapból).
+  Közös felület: `server/src/store.ts`. A JSON-motor (`json-db.ts`, `json-store.ts`) a Postgres-séma
+  szabályait, triggereit és lekérdezéseit utánozza; minden szerverfunkciót mindkét motorban meg kell írni,
+  a tesztek mindkettőn futnak.
 - **Node törlése:** csak az a node törölhető, amelynek legfeljebb egy kapcsolata van, és az is a szülője felé
   mutat (a kapcsolat nélküli legfelső szintű tehát igen), és nincs élő kommentje. A kuka mindig látszik, a nem
   törölhetőn inaktív. Megerősítés, utána fizikai törlés; a felületről nincs visszaállítás, de a napló „remove”
@@ -79,16 +83,21 @@ Hátravan, ebben a sorrendben:
 ## Parancsok
 
 - `npm run up` vagy `start.cmd` – telepítés, fordítás, indítás (http://localhost:3000); `git pull` nincs benne
-- `npm test` – szervertesztek; a `TEST_DATABASE_URL` adatbázist minden futáskor törli és újraépíti
+- `npm test` – szervertesztek a JSON-motoron, és ha van `TEST_DATABASE_URL`, a Postgresen is (azt minden
+  futáskor törli és újraépíti)
+- `npm run export-json` – a Postgres-adatbázis átírása a JSON-fájlba (`-- --force`: felülírja)
 - `npm run typecheck` – szerver és felület
 - `npm run dev:server`, `npm run dev:web` – fejlesztés közben (a felület a http://localhost:5173 címen)
 - `npm run create-user` – felhasználó létrehozása vagy jelszócsere
 
-A `.env` a repó gyökerében van (minta: `.env.example`). Helyben PostgreSQL 16 fut, a `notetaker_app`
-felhasználó a `notetaker` és a `notetaker_test` adatbázis tulajdonosa.
+A `.env` a repó gyökerében van (minta: `.env.example`). Helyben a JSON-motor az aktív
+(`data/notetaker.json`, nincs verziókezelve). PostgreSQL 16 is fut, a `notetaker_app` felhasználó a `notetaker`
+és a `notetaker_test` adatbázis tulajdonosa; a Postgres-tesztek ezen futnak.
 
 ## Munkamódszer
 
 - Minden lépéshez teszt tartozik; a felületet valódi böngészőben is végig kell próbálni (Playwright).
 - A séma változása új, sorszámozott fájl a `db/migrations/` mappában; a már lefutott migrációt nem írjuk át.
+  A JSON-motorban ugyanez a `json-db.ts` alapértékeiben és ellenőrzéseiben; a fájlformátum változásakor a
+  `FORMAT` számot emelni kell, és a régi fájlt betöltéskor átalakítani.
 - A felhasználó rövid, gyakori állapotjelentést vár, és nem szeret kézzel parancsokat futtatni.

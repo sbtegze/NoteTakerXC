@@ -14,6 +14,7 @@
     "dev:web": "npm run dev -w web",
     "migrate": "npm run migrate -w server",
     "create-user": "npm run create-user -w server",
+    "export-json": "npm run export-json -w server",
     "test": "npm test -w server",
     "typecheck": "npm run typecheck -w server && npm run typecheck -w web"
   }

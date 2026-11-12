@@ -1,14 +1,16 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { User } from '../src/auth.js';
+import { createUser, type User } from '../src/auth.js';
 import { withUser, type Db } from '../src/db.js';
-import { freshDb, testUser } from './helpers.js';
+import { freshPgDb, TEST_PASSWORD } from './helpers.js';
+
+// A Postgres-séma triggerei és korlátozásai; a JSON-motor megfelelője a json-db.test.ts.
 
 let db: Db;
 let user: User;
 
 beforeAll(async () => {
-  db = await freshDb();
-  user = await testUser(db);
+  db = await freshPgDb();
+  user = await createUser(db, 'teszt@example.com', 'Teszt Elek', TEST_PASSWORD);
 });
 
 afterAll(() => db.end());

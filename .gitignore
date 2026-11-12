@@ -2,3 +2,5 @@ node_modules/
 dist/
 .env
 *.log
+# a JSON-adatbázis (DB_ENGINE=json): személyes adat, jelszó-lenyomatok
+data/

@@ -2,21 +2,9 @@ import cookie from '@fastify/cookie';
 import rateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyInstance } from 'fastify';
-import { login, logout, SESSION_COOKIE, SESSION_DAYS, userForToken, type User } from './auth.js';
-import type { Db } from './db.js';
-import {
-  createNode,
-  deleteNode,
-  getNeighborhood,
-  getRoots,
-  listByType,
-  moveNode,
-  HttpError,
-  searchNodes,
-  updateNode,
-  type CreateNodeInput,
-} from './nodes.js';
-import { createNote, deleteNote, updateNote } from './notes.js';
+import { SESSION_COOKIE, SESSION_DAYS, type User } from './auth.js';
+import { HttpError, type CreateNodeInput } from './nodes.js';
+import type { Store } from './store.js';
 
 function optionalString(value: unknown, name: string): string | undefined {
   if (value === undefined || value === null) return undefined;
@@ -31,7 +19,7 @@ declare module 'fastify' {
 }
 
 export interface AppOptions {
-  db: Db;
+  store: Store;
   /** HTTPS mögött true: a süti csak titkosított kapcsolaton megy. */
   secureCookies?: boolean;
   loginAttemptsPerMinute?: number;
@@ -40,7 +28,7 @@ export interface AppOptions {
 }
 
 export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
-  const { db } = opts;
+  const { store } = opts;
   const app = Fastify({ trustProxy: true });
   await app.register(cookie);
   await app.register(rateLimit, { global: false });
@@ -48,7 +36,7 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
   // Az /api/login kivételével minden API-hívás bejelentkezést kér.
   app.addHook('preHandler', async (req, reply) => {
     if (!req.url.startsWith('/api/') || req.url === '/api/login') return;
-    const user = await userForToken(db, req.cookies[SESSION_COOKIE]);
+    const user = await store.userForToken(req.cookies[SESSION_COOKIE]);
     if (!user) return reply.code(401).send({ error: 'Bejelentkezés szükséges' });
     req.user = user;
   });
@@ -61,7 +49,7 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
       if (typeof email !== 'string' || typeof password !== 'string') {
         return reply.code(400).send({ error: 'E-mail és jelszó szükséges' });
       }
-      const result = await login(db, email, password);
+      const result = await store.login(email, password);
       if (!result) return reply.code(401).send({ error: 'Hibás e-mail vagy jelszó' });
       reply.setCookie(SESSION_COOKIE, result.token, {
         path: '/',
@@ -75,7 +63,7 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
   );
 
   app.post('/api/logout', async (req, reply) => {
-    await logout(db, req.cookies[SESSION_COOKIE]);
+    await store.logout(req.cookies[SESSION_COOKIE]);
     reply.clearCookie(SESSION_COOKIE, { path: '/' });
     return { ok: true };
   });
@@ -94,7 +82,7 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
   app.post<{ Body: CreateNodeInput }>('/api/nodes', async (req, reply) => {
     const b = req.body ?? ({} as CreateNodeInput);
     if (typeof b.content !== 'string') throw new HttpError(400, 'A szöveg kötelező');
-    const result = await createNode(db, req.user.id, {
+    const result = await store.createNode(req.user.id, {
       content: b.content,
       parentId: optionalString(b.parentId, 'parentId'),
       contextId: optionalString(b.contextId, 'contextId'),
@@ -115,41 +103,41 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
     if (aliases !== undefined && !(Array.isArray(aliases) && aliases.every((a) => typeof a === 'string'))) {
       throw new HttpError(400, 'Hibás mező: aliases');
     }
-    return updateNode(db, req.user.id, req.params.id, { content, version: version as number, type, aliases });
+    return store.updateNode(req.user.id, req.params.id, { content, version: version as number, type, aliases });
   });
 
   app.delete<{ Params: { id: string }; Querystring: { version?: string } }>('/api/nodes/:id', async (req) =>
-    deleteNode(db, req.user.id, req.params.id, Number(req.query.version)),
+    store.deleteNode(req.user.id, req.params.id, Number(req.query.version)),
   );
 
   app.post<{ Params: { id: string }; Body: { from?: unknown; to?: unknown } }>('/api/nodes/:id/move', async (req) =>
-    moveNode(db, req.user.id, req.params.id, req.body?.from, req.body?.to),
+    store.moveNode(req.user.id, req.params.id, req.body?.from, req.body?.to),
   );
 
   // A fejléc gyors linkjei: egy típus összes node-ja.
-  app.get<{ Querystring: { type?: string } }>('/api/nodes', async (req) => listByType(db, req.query.type));
+  app.get<{ Querystring: { type?: string } }>('/api/nodes', async (req) => store.listByType(req.query.type));
 
   // A kezdőlap: a legfelső szintű node-ok.
-  app.get('/api/roots', async () => getRoots(db));
+  app.get('/api/roots', async () => store.getRoots());
 
   app.get<{ Params: { id: string }; Querystring: { melyseg?: string } }>('/api/nodes/:id', async (req) =>
-    getNeighborhood(db, req.params.id, req.query.melyseg === undefined ? 0 : Number(req.query.melyseg)),
+    store.getNeighborhood(req.params.id, req.query.melyseg === undefined ? 0 : Number(req.query.melyseg)),
   );
 
   app.post<{ Params: { id: string }; Body: { content?: unknown } }>('/api/nodes/:id/notes', async (req, reply) =>
-    reply.code(201).send(await createNote(db, req.user.id, req.params.id, req.body?.content)),
+    reply.code(201).send(await store.createNote(req.user.id, req.params.id, req.body?.content)),
   );
 
   app.patch<{ Params: { id: string }; Body: { content?: unknown; version?: unknown } }>('/api/notes/:id', async (req) =>
-    updateNote(db, req.user.id, req.params.id, req.body?.content, req.body?.version),
+    store.updateNote(req.user.id, req.params.id, req.body?.content, req.body?.version),
   );
 
   app.delete<{ Params: { id: string }; Querystring: { version?: string } }>('/api/notes/:id', async (req) =>
-    deleteNote(db, req.user.id, req.params.id, Number(req.query.version)),
+    store.deleteNote(req.user.id, req.params.id, Number(req.query.version)),
   );
 
   app.get<{ Querystring: { q?: string } }>('/api/search', async (req) => ({
-    results: await searchNodes(db, typeof req.query.q === 'string' ? req.query.q : ''),
+    results: await store.searchNodes(typeof req.query.q === 'string' ? req.query.q : ''),
   }));
 
   if (opts.webDir) {

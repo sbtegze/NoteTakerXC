@@ -1,8 +1,6 @@
 import { createInterface } from 'node:readline/promises';
 import { Writable } from 'node:stream';
-import { createUser } from './auth.js';
-import { createDb } from './db.js';
-import { migrate } from './migrate.js';
+import { openStore } from './store.js';
 
 /**
  * Felhasználó létrehozása vagy jelszavának cseréje.
@@ -86,18 +84,17 @@ function explain(err: unknown): string {
 
 try {
   const [argEmail, argName, argPassword] = process.argv.slice(2);
-  const db = createDb();
+  const store = await openStore();
   try {
-    await migrate(db);
     const email = argEmail ?? (await ask('E-mail: '));
     const displayName = argName ?? (await ask('Megjelenített név: '));
     const password = argPassword ?? (await ask('Jelszó (legalább 10 karakter): ', true));
     if (!email.includes('@') || !displayName) throw new Error('Az e-mail és a név kötelező.');
-    const user = await createUser(db, email, displayName, password);
+    const user = await store.createUser(email, displayName, password);
     console.log(`Felhasználó kész: ${user.email}`);
   } finally {
     rl?.close();
-    await db.end();
+    await store.close();
   }
 } catch (err) {
   console.error(`Hiba: ${explain(err)}`);

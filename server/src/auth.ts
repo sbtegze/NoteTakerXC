@@ -27,7 +27,7 @@ export async function verifyPassword(password: string, stored: string): Promise<
   return timingSafeEqual(expected, actual);
 }
 
-const hashToken = (token: string) => createHash('sha256').update(token).digest('hex');
+export const hashToken = (token: string) => createHash('sha256').update(token).digest('hex');
 
 export async function createUser(db: Db, email: string, displayName: string, password: string): Promise<User> {
   if (password.length < 10) throw new Error('A jelszó legalább 10 karakter legyen');
@@ -41,7 +41,7 @@ export async function createUser(db: Db, email: string, displayName: string, pas
 }
 
 // Ismeretlen e-mailnél is elvégezzük a jelszóellenőrzést, hogy a válaszidő ne árulja el, létezik-e a fiók.
-const DUMMY_HASH = await hashPassword(randomBytes(12).toString('hex'));
+export const DUMMY_HASH = await hashPassword(randomBytes(12).toString('hex'));
 
 export async function login(db: Db, email: string, password: string): Promise<{ token: string; user: User } | null> {
   const { rows } = await db.query(

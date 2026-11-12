@@ -1,10 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
-import type { Db } from '../src/db.js';
-import { freshDb, TEST_PASSWORD, testUser } from './helpers.js';
+import { freshDb, TEST_PASSWORD, testUser, type TestDb } from './helpers.js';
 
-let db: Db;
+let db: TestDb;
 let app: FastifyInstance;
 let cookies: { sid: string };
 
@@ -21,14 +20,14 @@ const create = async (payload: object) =>
   (await app.inject({ method: 'POST', url: '/api/nodes', payload, cookies })).json().node as { id: string };
 const comment = (nodeId: string, content: unknown) =>
   app.inject({ method: 'POST', url: `/api/nodes/${nodeId}/notes`, payload: { content }, cookies });
-const edgeCount = async () => (await db.query('SELECT count(*)::int AS n FROM edges')).rows[0].n as number;
+const edgeCount = async () => (await db.rows('edges')).length;
 
 let szabi: { id: string }, meeting: { id: string }, entry: { id: string };
 
 beforeAll(async () => {
   db = await freshDb();
   await testUser(db);
-  app = await buildApp({ db });
+  app = await buildApp({ store: db.store });
   const res = await app.inject({
     method: 'POST',
     url: '/api/login',
@@ -67,7 +66,7 @@ describe('kommentek', () => {
       ['ticket', undefined], // ismeretlen jegyszám: kiemelt, de nem jön létre jegy node
     ]);
     expect(await edgeCount()).toBe(before);
-    expect((await db.query('SELECT 1 FROM nodes WHERE ticket_no = 9999')).rowCount).toBe(0);
+    expect((await db.rows('nodes')).filter((n) => n.ticket_no === 9999)).toHaveLength(0);
     // Szabinál nem jelenik meg a komment bejegyzésként.
     expect((await get(`/api/nodes/${szabi.id}`)).below).toEqual([]);
   });
@@ -101,8 +100,8 @@ describe('kommentek', () => {
 
     const view = await get(`/api/nodes/${meeting.id}`);
     expect(view.center.notes.map((n: Note) => n.content)).not.toContain('tévedés');
-    const log = await db.query('SELECT action FROM change_log WHERE entity_id = $1 ORDER BY id', [note.id]);
-    expect(log.rows.map((r) => r.action)).toEqual(['create', 'delete']);
+    const log = (await db.rows('change_log')).filter((l) => l.entity_id === note.id);
+    expect(log.map((r) => r.action)).toEqual(['create', 'delete']);
   });
 
   it('üres komment, ismeretlen node és hiányzó verzió: hiba', async () => {

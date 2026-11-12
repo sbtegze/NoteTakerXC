@@ -17,9 +17,12 @@ export interface NodeRow {
   aliases: string[];
   ticket_no: number | null;
   version: number;
-  created_at: Date;
-  updated_at: Date;
+  created_at: Timestamp;
+  updated_at: Timestamp;
 }
+
+/** A Postgres-motor Date-et ad, a JSON-motor ISO szöveget. */
+export type Timestamp = Date | string;
 
 /** A felismert szövegrész, a hozzá tartozó node azonosítójával (jegynél, embernél). */
 export type LinkedSpan = Span & { targetId?: string };
@@ -38,7 +41,7 @@ export function localDate(at: Date = new Date()): string {
 
 // ---------- felismerés ----------
 
-interface RecognitionContext {
+export interface RecognitionContext {
   people: Person[];
   tickets: Map<number, string>;
 }
@@ -46,20 +49,28 @@ interface RecognitionContext {
 export async function loadContext(q: Queryable): Promise<RecognitionContext> {
   const people = await q.query(`SELECT id, content, aliases FROM nodes WHERE type = 'person' AND deleted_at IS NULL`);
   const tickets = await q.query('SELECT id, ticket_no FROM nodes WHERE ticket_no IS NOT NULL AND deleted_at IS NULL');
+  return contextFrom(people.rows, tickets.rows);
+}
+
+/** A felismerés környezete az élő emberekből és jegyekből (mindkét adatbázismotor ezt használja). */
+export function contextFrom(
+  people: { id: string; content: string; aliases: string[] }[],
+  tickets: { id: string; ticket_no: number }[],
+): RecognitionContext {
   return {
-    people: people.rows.map((r) => ({
+    people: people.map((r) => ({
       id: r.id,
       // A node első sora és a becenevek; a többtagú név tagjait ("Kovács István" -> Kovács, István)
       // a felismerő maga bontja ki.
       names: [(r.content.split('\n')[0] ?? '').trim(), ...r.aliases].filter((n: string) => n.length >= 2),
     })),
-    tickets: new Map(tickets.rows.map((r) => [r.ticket_no, r.id])),
+    tickets: new Map(tickets.map((r) => [r.ticket_no, r.id])),
   };
 }
 
 export function spansOf(node: Pick<NodeRow, 'id' | 'content' | 'created_at'>, ctx: RecognitionContext): LinkedSpan[] {
   return recognize(node.content, {
-    today: localDate(node.created_at), // a relatív dátumok a rögzítés napjához képest értendők
+    today: localDate(new Date(node.created_at)), // a relatív dátumok a rögzítés napjához képest értendők
     people: ctx.people.filter((p) => p.id !== node.id),
     knownTickets: new Set(ctx.tickets.keys()),
   }).map((s) => ({
@@ -176,7 +187,7 @@ export async function requireNode(tx: Queryable, id: string): Promise<void> {
   if (!rowCount) throw new HttpError(404, 'A node nem található');
 }
 
-function checkType(type: string | null | undefined): void {
+export function checkType(type: string | null | undefined): void {
   if (type != null && !(NODE_TYPES as readonly string[]).includes(type)) throw new HttpError(400, 'Ismeretlen típus');
 }
 
@@ -187,7 +198,7 @@ const COMMANDS: Record<string, string> = { meeting: 'meeting', téma: 'topic', t
  * „/parancs cím” az első sorban: a cím és a rögzítés napja (`day`, alapból ma) lesz az elem neve, a további
  * sorok maradnak. Pl. „/meeting AI workshop” -> Meeting típusú „AI workshop 2026-11-12”. Ismeretlennél null.
  */
-function parseCommand(content: string, day = localDate()): { type: string; content: string } | null {
+export function parseCommand(content: string, day = localDate()): { type: string; content: string } | null {
   const [first = '', ...rest] = content.split('\n');
   const m = /^\/(\p{L}+)[ \t]+(\S.*)$/u.exec(first.trim());
   const type = m && COMMANDS[m[1]!.toLowerCase()];
@@ -203,7 +214,7 @@ function parseCommand(content: string, day = localDate()): { type: string; conte
  * Mentéskor a relatív dátumok elé a pontos dátum kerül (a rögzítés napjához képest). A meeting és a téma
  * címsora kimarad: abban a „Pénteki retro”-féle szó nem a dátuma, a dátuma pedig úgyis ott áll.
  */
-function anchorDates(content: string, type: string | null | undefined, day: string): string {
+export function anchorDates(content: string, type: string | null | undefined, day: string): string {
   if (type !== 'meeting' && type !== 'topic') return anchorRelativeDates(content, day);
   const [first = '', ...rest] = content.split('\n');
   return rest.length ? `${first}\n${anchorRelativeDates(rest.join('\n'), day)}` : first;
@@ -411,7 +422,7 @@ export function moveNode(db: Db, userId: string, id: string, from: unknown, to: 
 
 // ---------- olvasás ----------
 
-const brief = (r: NodeRow) => ({ id: r.id, content: r.content, type: r.type, ticket_no: r.ticket_no });
+export const brief = (r: NodeRow) => ({ id: r.id, content: r.content, type: r.type, ticket_no: r.ticket_no });
 
 /**
  * Egy típus összes node-ja a fejléc gyors linkjeihez: az emberek név szerint, a jegyek szám szerint,
@@ -426,7 +437,7 @@ export async function listByType(db: Db, type: unknown) {
      ORDER BY ticket_no NULLS LAST, created_at DESC`,
     [type],
   );
-  const nodes = rows.map((r) => ({ ...brief(r), created_at: r.created_at as Date }));
+  const nodes = rows.map((r) => ({ ...brief(r), created_at: r.created_at as Timestamp }));
   if (type === 'person') nodes.sort((a, b) => a.content.localeCompare(b.content, 'hu'));
   return { nodes };
 }
@@ -442,7 +453,7 @@ export async function getRoots(db: Db) {
        AND NOT EXISTS (SELECT 1 FROM edges e WHERE e.target_id = n.id AND e.kind IN ('unsorted', 'belongs_to'))
      ORDER BY n.created_at DESC`,
   );
-  return { roots: rows.map((r) => ({ ...brief(r), created_at: r.created_at as Date })) };
+  return { roots: rows.map((r) => ({ ...brief(r), created_at: r.created_at as Timestamp })) };
 }
 
 export interface NoteRow {
@@ -450,8 +461,8 @@ export interface NoteRow {
   node_id: string;
   content: string;
   version: number;
-  created_at: Date;
-  updated_at: Date;
+  created_at: Timestamp;
+  updated_at: Timestamp;
 }
 
 export const NOTE_COLS = 'id, node_id, content, version, created_at, updated_at';
@@ -622,7 +633,7 @@ export async function getNeighborhood(db: Db, id: string, depth = 0) {
   return {
     center: detailed(center),
     parents: parents.rows.map(brief),
-    ancestors: ancestors.rows.map((r) => ({ ...brief(r), created_at: r.created_at as Date, parent_ids: r.parent_ids as string[] })),
+    ancestors: ancestors.rows.map((r) => ({ ...brief(r), created_at: r.created_at as Timestamp, parent_ids: r.parent_ids as string[] })),
     mention_parent_ids: mentionParentIds,
     below: below.rows.map((r) => ({
       ...detailed(r),
@@ -630,10 +641,10 @@ export async function getNeighborhood(db: Db, id: string, depth = 0) {
       contexts: contexts.rows.filter((c) => c.target_id === r.id).map(brief),
     })),
     connected: [
-      ...connected.rows.map((r) => ({ ...brief(r), mentions: r.mentions as number, last_at: r.last_at as Date })),
+      ...connected.rows.map((r) => ({ ...brief(r), mentions: r.mentions as number, last_at: r.last_at as Timestamp })),
       ...typedBelow.rows
         .filter((r) => !connected.rows.some((c) => c.id === r.id))
-        .map((r) => ({ ...brief(r), mentions: 0, last_at: r.created_at as Date })),
+        .map((r) => ({ ...brief(r), mentions: 0, last_at: r.created_at as Timestamp })),
     ],
     deeper: deeperRows.map(detailed),
     deeper_edges: deeperEdges.map((e) => ({ parent_id: e.parent_id as string, child_id: e.child_id as string })),

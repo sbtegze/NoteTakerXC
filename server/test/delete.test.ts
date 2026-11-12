@@ -1,10 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
-import type { Db } from '../src/db.js';
-import { freshDb, TEST_PASSWORD, testUser } from './helpers.js';
+import { freshDb, TEST_PASSWORD, testUser, type TestDb } from './helpers.js';
 
-let db: Db;
+let db: TestDb;
 let app: FastifyInstance;
 let cookies: { sid: string };
 
@@ -16,7 +15,7 @@ interface Node {
 beforeAll(async () => {
   db = await freshDb();
   await testUser(db);
-  app = await buildApp({ db });
+  app = await buildApp({ store: db.store });
   const res = await app.inject({
     method: 'POST',
     url: '/api/login',
@@ -34,7 +33,7 @@ const create = async (payload: object) =>
   (await app.inject({ method: 'POST', url: '/api/nodes', payload, cookies })).json().node as Node;
 const view = async (id: string) => (await app.inject({ url: `/api/nodes/${id}`, cookies })).json();
 const del = (n: Node) => app.inject({ method: 'DELETE', url: `/api/nodes/${n.id}?version=${n.version}`, cookies });
-const exists = async (id: string) => (await db.query('SELECT 1 FROM nodes WHERE id = $1', [id])).rowCount === 1;
+const exists = async (id: string) => (await db.rows('nodes')).some((n) => n.id === id);
 
 describe('node törlése', () => {
   it('a csak a szülőjéhez kötött, komment nélküli node végleg törlődik; a napló megőrzi', async () => {
@@ -47,9 +46,9 @@ describe('node törlése', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ parentId: parent.id });
     expect(await exists(leaf.id)).toBe(false);
-    expect((await db.query('SELECT 1 FROM edges WHERE $1 IN (source_id, target_id)', [leaf.id])).rowCount).toBe(0);
-    const log = await db.query(`SELECT action FROM change_log WHERE entity = 'node' AND entity_id = $1 ORDER BY id`, [leaf.id]);
-    expect(log.rows.at(-1)).toEqual({ action: 'remove' });
+    expect((await db.rows('edges')).filter((e) => e.source_id === leaf.id || e.target_id === leaf.id)).toHaveLength(0);
+    const log = (await db.rows('change_log')).filter((l) => l.entity === 'node' && l.entity_id === leaf.id);
+    expect(log.at(-1)?.action).toBe('remove');
   });
 
   it('a törölt komment nem akadály, az élő igen', async () => {
@@ -93,7 +92,7 @@ describe('node törlése', () => {
     expect(await exists(root.id)).toBe(false);
 
     await create({ content: '@Ödön ráér' }); // Ödön legfelső szintű ember, és ez a sor említi
-    const odon = (await db.query(`SELECT id, version FROM nodes WHERE content = 'Ödön'`)).rows[0];
+    const odon = (await db.rows('nodes')).find((n) => n.content === 'Ödön') as unknown as Node;
     expect((await view(odon.id)).center.deletable).toBe(false);
     expect((await del(odon)).statusCode).toBe(409);
   });

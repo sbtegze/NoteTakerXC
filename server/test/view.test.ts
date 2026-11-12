@@ -1,10 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
-import type { Db } from '../src/db.js';
-import { freshDb, TEST_PASSWORD, testUser } from './helpers.js';
+import { freshDb, TEST_PASSWORD, testUser, type TestDb } from './helpers.js';
 
-let db: Db;
+let db: TestDb;
 let app: FastifyInstance;
 let cookies: { sid: string };
 
@@ -28,7 +27,7 @@ let szabi: Brief, istvan: Brief, meeting: Brief, ticketId: string;
 beforeAll(async () => {
   db = await freshDb();
   await testUser(db);
-  app = await buildApp({ db });
+  app = await buildApp({ store: db.store });
   const res = await app.inject({
     method: 'POST',
     url: '/api/login',
@@ -42,7 +41,7 @@ beforeAll(async () => {
   await create({ content: 'Szabi a #1234-et pénteken beadja', parentId: meeting.id });
   await create({ content: '#1234: Istvánra várunk a specifikáció miatt', parentId: meeting.id });
   await create({ content: 'István jövő héten nincs', parentId: meeting.id });
-  ticketId = (await db.query('SELECT id FROM nodes WHERE ticket_no = 1234')).rows[0].id;
+  ticketId = (await db.rows('nodes')).find((n) => n.ticket_no === 1234)!.id as string;
 });
 
 afterAll(async () => {
@@ -64,15 +63,12 @@ describe('középre állítás', () => {
     expect(chain(entry.id)).toEqual(['István jövő héten nincs', 'Heti egyeztetés 11.10.']);
 
     // Kör: a meeting az al-bejegyzés alá is bekerül.
-    const { id: userId } = (await db.query('SELECT id FROM users LIMIT 1')).rows[0];
-    await db.query(
-      `INSERT INTO edges (source_id, target_id, kind, created_by) VALUES ($1, $2, 'belongs_to', $3)`,
-      [sub.id, meeting.id, userId],
-    );
+    const userId = (await db.rows('users'))[0]!.id;
+    await db.insert('edges', { source_id: sub.id, target_id: meeting.id, kind: 'belongs_to', created_by: userId });
     const res = await app.inject({ url: `/api/nodes/${sub.id}`, cookies });
     expect(res.statusCode).toBe(200);
     expect(res.json().ancestors.map((a: Brief) => a.content)).toContain('Al-bejegyzés');
-    await db.query(`DELETE FROM edges WHERE source_id = $1 AND target_id = $2`, [sub.id, meeting.id]);
+    await db.remove('edges', (e) => e.source_id === sub.id && e.target_id === meeting.id);
   });
 
   it('kérésre a bejegyzések alatti szinteket is adja, legfeljebb a kért mélységig', async () => {
@@ -98,7 +94,7 @@ describe('középre állítás', () => {
     expect(titles(roots)).not.toContain('Szabi');
     expect(titles(roots)).not.toContain('#1234');
     expect(titles(roots)).not.toContain('Szabi a #1234-et pénteken beadja'); // a meeting alatt van
-    await db.query('DELETE FROM nodes WHERE id = $1', [later.id]);
+    await db.remove('nodes', (n) => n.id === later.id);
   });
 
   it('a jegynél időrendben látszik minden, ami róla elhangzott, és hogy hol', async () => {
@@ -128,7 +124,7 @@ describe('középre állítás', () => {
     const erp = await create({ content: 'ERP státusz', type: 'meeting' });
     const head = await create({ content: '@Ákos', parentId: erp.id });
     await create({ content: '#5589', parentId: head.id });
-    const ticket = (await db.query('SELECT id FROM nodes WHERE ticket_no = 5589')).rows[0];
+    const ticket = (await db.rows('nodes')).find((n) => n.ticket_no === 5589)!;
 
     const view = await get(`/api/nodes/${ticket.id}`);
     expect(view.mention_parent_ids).toEqual([head.id]);
@@ -169,8 +165,8 @@ describe('középre állítás', () => {
     // A mélyebb szinten említett jegy és ember is.
     expect(titles(view.connected)).toEqual(expect.arrayContaining(['#4321', 'Kálmán']));
     for (const n of [deep2, deep1, near, topic, dev, root]) {
-      await db.query('DELETE FROM edges WHERE $1 IN (source_id, target_id)', [n.id]);
-      await db.query('DELETE FROM nodes WHERE id = $1', [n.id]);
+      await db.remove('edges', (e) => e.source_id === n.id || e.target_id === n.id);
+      await db.remove('nodes', (x) => x.id === n.id);
     }
   });
 
@@ -194,7 +190,7 @@ describe('típus szerinti lista', () => {
     const newer = await create({ content: 'újabb meeting', type: 'meeting' });
     const meetings = await list('meeting');
     expect(meetings.indexOf('újabb meeting')).toBeLessThan(meetings.indexOf('régebbi meeting'));
-    for (const n of [older, newer]) await db.query('DELETE FROM nodes WHERE id = $1', [n.id]);
+    for (const n of [older, newer]) await db.remove('nodes', (x) => x.id === n.id);
 
     expect((await app.inject({ url: '/api/nodes?type=valami', cookies })).statusCode).toBe(400);
   });
@@ -204,7 +200,7 @@ describe('típus és becenév', () => {
   it('az @-tal létrejött embert a korábbi szövegekben és a becenevén is felismeri', async () => {
     await create({ content: 'Gézának szólni kell a #1234 miatt', parentId: meeting.id });
     await create({ content: '@Géza is jön', parentId: meeting.id });
-    const geza = (await db.query(`SELECT id, version FROM nodes WHERE type = 'person' AND content = 'Géza'`)).rows[0];
+    const geza = (await db.rows('nodes')).find((n) => n.type === 'person' && n.content === 'Géza') as unknown as Brief;
     expect(titles((await get(`/api/nodes/${geza.id}`)).below)).toEqual(['Gézának szólni kell a #1234 miatt', '@Géza is jön']);
 
     const res = await patch(geza.id, { version: geza.version, aliases: ['Gézu'] });
@@ -223,10 +219,10 @@ describe('típus és becenév', () => {
   });
 
   it('az újraszámolás nem szemeteli tele a naplót', async () => {
-    const before = (await db.query('SELECT count(*)::int AS n FROM change_log')).rows[0].n;
+    const before = (await db.rows('change_log')).length;
     const view = (await get(`/api/nodes/${szabi.id}`)).center;
     await patch(szabi.id, { version: view.version, aliases: ['Szabolcs'] });
-    const after = (await db.query('SELECT count(*)::int AS n FROM change_log')).rows[0].n;
+    const after = (await db.rows('change_log')).length;
     expect(after - before).toBe(1); // csak a becenév változása
   });
 
@@ -244,6 +240,12 @@ describe('keresés', () => {
     expect(byTicket[0].content).toBe('#1234');
     const inflected = (await get(`/api/search?q=${encodeURIComponent('specifikációk')}`)).results;
     expect(titles(inflected)).toEqual(['#1234: Istvánra várunk a specifikáció miatt']);
+  });
+
+  it('a ragozásban megnyúlt tőre is talál (Kinga -> Kingával)', async () => {
+    await create({ content: 'Kinga teszteli a riportot' });
+    const found = (await get(`/api/search?q=${encodeURIComponent('Kingával')}`)).results;
+    expect(titles(found)).toEqual(['Kinga teszteli a riportot']);
   });
 
   it('a % és _ jelek sima karakterek, az üres keresés üres', async () => {

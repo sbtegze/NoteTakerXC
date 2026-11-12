@@ -1,18 +1,17 @@
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
-import type { Db } from '../src/db.js';
 import { localDate } from '../src/nodes.js';
-import { freshDb, TEST_PASSWORD, testUser } from './helpers.js';
+import { freshDb, nodeMap, TEST_PASSWORD, testUser, type TestDb } from './helpers.js';
 
-let db: Db;
+let db: TestDb;
 let app: FastifyInstance;
 let cookies: { sid: string };
 
 beforeAll(async () => {
   db = await freshDb();
   await testUser(db);
-  app = await buildApp({ db });
+  app = await buildApp({ store: db.store });
   const res = await app.inject({
     method: 'POST',
     url: '/api/login',
@@ -30,23 +29,32 @@ const post = (payload: object) => app.inject({ method: 'POST', url: '/api/nodes'
 const patch = (id: string, payload: object) => app.inject({ method: 'PATCH', url: `/api/nodes/${id}`, payload, cookies });
 const create = async (payload: object) => (await post(payload)).json().node as { id: string; version: number };
 
-const edgesFrom = async (id: string) =>
-  (
-    await db.query(
-      `SELECT e.kind, n.content FROM edges e JOIN nodes n ON n.id = e.target_id WHERE e.source_id = $1 ORDER BY n.content`,
-      [id],
-    )
-  ).rows.map((r) => `${r.kind}:${r.content}`);
-const parentsOf = async (id: string) =>
-  (
-    await db.query(
-      `SELECT n.content FROM edges e JOIN nodes n ON n.id = e.source_id WHERE e.target_id = $1 AND e.kind = 'unsorted' ORDER BY n.content`,
-      [id],
-    )
-  ).rows.map((r) => r.content);
+const byText = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+const edgesFrom = async (id: string) => {
+  const nodes = await nodeMap(db);
+  return (await db.rows('edges'))
+    .filter((e) => e.source_id === id)
+    .map((e) => `${e.kind}:${nodes.get(e.target_id as string)!.content}`)
+    .sort((a, b) => byText(a.replace(/^\w+:/, ''), b.replace(/^\w+:/, '')));
+};
+const parentsOf = async (id: string) => {
+  const nodes = await nodeMap(db);
+  return (await db.rows('edges'))
+    .filter((e) => e.target_id === id && e.kind === 'unsorted')
+    .map((e) => nodes.get(e.source_id as string)!.content as string)
+    .sort(byText);
+};
 const datesOf = async (id: string) =>
-  (await db.query('SELECT starts_on, ends_on, source_text, confirmed FROM node_dates WHERE node_id = $1 ORDER BY starts_on', [id]))
-    .rows;
+  (await db.rows('node_dates'))
+    .filter((d) => d.node_id === id)
+    .sort((a, b) => byText(a.starts_on as string, b.starts_on as string))
+    .map(({ starts_on, ends_on, source_text, confirmed }) => ({ starts_on, ends_on, source_text, confirmed })) as {
+    starts_on: string;
+    ends_on: string;
+    source_text: string;
+    confirmed: boolean;
+  }[];
+const nodesWhere = async (where: (n: Record<string, unknown>) => boolean) => (await db.rows('nodes')).filter(where);
 
 describe('rögzítés', () => {
   it('bejelentkezés nélkül nem megy', async () => {
@@ -101,15 +109,10 @@ describe('rögzítés', () => {
     const again = await post({ content: `/meeting Linkelt workshop ${today}\nott: jegyzet`, parentId: second.id });
     expect(again.json().node.id).toBe(meeting.id);
 
-    const same = await db.query(`SELECT count(*)::int AS n FROM nodes WHERE content = $1`, [`Linkelt workshop ${today}`]);
-    expect(same.rows[0].n).toBe(1);
+    expect(await nodesWhere((n) => n.content === `Linkelt workshop ${today}`)).toHaveLength(1);
     expect(await parentsOf(meeting.id)).toEqual(['első helye', 'második helye']);
     // Az első sor alatti szöveg a meglévő meeting alá kerül.
-    const below = await db.query(
-      `SELECT n.content FROM edges e JOIN nodes n ON n.id = e.target_id WHERE e.source_id = $1`,
-      [meeting.id],
-    );
-    expect(below.rows.map((r) => r.content)).toEqual(['ott: jegyzet']);
+    expect((await edgesFrom(meeting.id)).map((e) => e.replace(/^\w+:/, ''))).toEqual(['ott: jegyzet']);
   });
 
   it('a meglévő meetinget nem linkeli a saját alárendeltje alá', async () => {
@@ -137,7 +140,7 @@ describe('rögzítés', () => {
 
   it('szerkesztéskor is hat a parancs, a rögzítés napjával; típusos node-nál szöveg marad', async () => {
     const node = await create({ content: 'sima sor\nmásodik sor' });
-    const day = localDate(new Date((await db.query('SELECT created_at FROM nodes WHERE id = $1', [node.id])).rows[0].created_at));
+    const day = localDate(new Date((await nodesWhere((n) => n.id === node.id))[0]!.created_at as string));
     const res = await patch(node.id, { content: '/meeting Utólag\nmásodik sor', version: node.version });
     expect(res.json().node).toMatchObject({ type: 'meeting', content: `Utólag ${day}\nmásodik sor` });
 
@@ -165,13 +168,14 @@ describe('rögzítés', () => {
 
     const dates = await datesOf(node.id);
     expect(dates).toHaveLength(1);
+    const date = dates[0]!;
     // Mentéskor a pontos dátum elé került, a kettő egy felismert dátum.
-    expect(dates[0]).toMatchObject({ source_text: expect.stringMatching(/^\d{4}-11-20 nov\. 20$/), confirmed: false });
-    expect(dates[0].starts_on).toBe(dates[0].ends_on);
-    expect(dates[0].starts_on).toMatch(/-11-20$/);
+    expect(date).toMatchObject({ source_text: expect.stringMatching(/^\d{4}-11-20 nov\. 20$/), confirmed: false });
+    expect(date.starts_on).toBe(date.ends_on);
+    expect(date.starts_on).toMatch(/-11-20$/);
 
-    const ticket = await db.query(`SELECT type, content FROM nodes WHERE ticket_no = 1234`);
-    expect(ticket.rows).toEqual([{ type: 'ticket', content: '#1234' }]);
+    const ticket = await nodesWhere((n) => n.ticket_no === 1234);
+    expect(ticket.map(({ type, content }) => ({ type, content }))).toEqual([{ type: 'ticket', content: '#1234' }]);
   });
 
   it('ugyanaz a jegy csak egyszer jön létre, és utána # nélkül is felismeri', async () => {
@@ -179,14 +183,14 @@ describe('rögzítés', () => {
     const bare = await create({ content: '1234 kész, 5678 nem jegy' });
     expect(await edgesFrom(again.id)).toEqual(['mention:#1234']);
     expect(await edgesFrom(bare.id)).toEqual(['mention:#1234']);
-    expect((await db.query(`SELECT count(*)::int AS n FROM nodes WHERE type = 'ticket'`)).rows[0].n).toBe(1);
+    expect(await nodesWhere((n) => n.type === 'ticket')).toHaveLength(1);
   });
 
   it('az átnevezett jegyet is megtalálja, és a jegy nem említi önmagát', async () => {
-    const { rows } = await db.query('SELECT id, version FROM nodes WHERE ticket_no = 1234');
-    const res = await patch(rows[0].id, { content: '#1234 Számlakép export', version: rows[0].version });
+    const ticket = (await nodesWhere((n) => n.ticket_no === 1234))[0] as { id: string; version: number };
+    const res = await patch(ticket.id, { content: '#1234 Számlakép export', version: ticket.version });
     expect(res.statusCode).toBe(200);
-    expect(await edgesFrom(rows[0].id)).toEqual([]);
+    expect(await edgesFrom(ticket.id)).toEqual([]);
     const entry = await create({ content: '#1234 tesztelés alatt' });
     expect(await edgesFrom(entry.id)).toEqual(['mention:#1234 Számlakép export']);
   });
@@ -204,7 +208,7 @@ describe('rögzítés', () => {
 
   it('a kézzel megerősített dátum szerkesztés után is megmarad', async () => {
     const created = (await post({ content: 'Szabi nincs dec 22–jan 2' })).json().node;
-    await db.query(`UPDATE node_dates SET confirmed = true, meaning = 'absence' WHERE node_id = $1`, [created.id]);
+    await db.update('node_dates', (d) => d.node_id === created.id, { confirmed: true, meaning: 'absence' });
     await patch(created.id, { content: 'Szabi nincs dec 22–jan 2, holnap még bent', version: created.version });
     const dates = await datesOf(created.id);
     expect(dates.map((d) => [d.source_text, d.confirmed])).toEqual([
@@ -231,8 +235,8 @@ describe('rögzítés', () => {
     const res = await post({ content: '@Gézának szólni kell, @Gézát is hívd' });
     const { node, spans } = res.json();
     expect(spans.map((s: { text: string }) => s.text)).toEqual(['@Gézának', '@Gézát']);
-    const people = await db.query(`SELECT content FROM nodes WHERE type = 'person' AND content LIKE 'Géz%'`);
-    expect(people.rows).toEqual([{ content: 'Géza' }]);
+    const people = await nodesWhere((n) => n.type === 'person' && String(n.content).startsWith('Géz'));
+    expect(people.map((n) => n.content)).toEqual(['Géza']);
     expect(await edgesFrom(node.id)).toEqual(['mention:Géza']);
     expect(await edgesFrom(earlier.id)).toEqual(['mention:Géza']);
 
@@ -245,8 +249,8 @@ describe('rögzítés', () => {
     const earlier = await create({ content: 'Mátrai Petinek szóltam' });
     const res = await post({ content: '@Mátrai Peti átnézi, @Mátrai Petit is kérdezd' });
     expect(res.json().spans.map((s: { text: string }) => s.text)).toEqual(['@Mátrai Peti', '@Mátrai Petit']);
-    const people = await db.query(`SELECT content FROM nodes WHERE type = 'person' AND content LIKE 'Mátrai%'`);
-    expect(people.rows).toEqual([{ content: 'Mátrai Peti' }]);
+    const people = await nodesWhere((n) => n.type === 'person' && String(n.content).startsWith('Mátrai'));
+    expect(people.map((n) => n.content)).toEqual(['Mátrai Peti']);
     expect(await edgesFrom(earlier.id)).toEqual(['mention:Mátrai Peti']);
 
     // Egy másik Peti mellett a „Peti” magában nem dönt, a „Mátrai” igen.
@@ -274,12 +278,12 @@ describe('rögzítés', () => {
   it('a kommentben a @név nem hoz létre embert', async () => {
     const node = await create({ content: 'kommentelt' });
     await app.inject({ method: 'POST', url: `/api/nodes/${node.id}/notes`, payload: { content: '@Ottó tudja' }, cookies });
-    expect((await db.query(`SELECT 1 FROM nodes WHERE content = 'Ottó'`)).rowCount).toBe(0);
+    expect(await nodesWhere((n) => n.content === 'Ottó')).toHaveLength(0);
   });
 
   it('sikertelen rögzítés után nem marad félkész adat', async () => {
-    const before = (await db.query('SELECT count(*)::int AS n FROM nodes')).rows[0].n;
+    const before = (await db.rows('nodes')).length;
     await post({ content: 'árva #9999', parentId: '00000000-0000-4000-8000-000000000000' });
-    expect((await db.query('SELECT count(*)::int AS n FROM nodes')).rows[0].n).toBe(before);
+    expect(await db.rows('nodes')).toHaveLength(before);
   });
 });

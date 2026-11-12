@@ -3,10 +3,27 @@
 Vizuális jegyzetelő: bármelyik node középre állítható, körülötte csoportosul minden, ami kapcsolódik hozzá.
 Rögzítéskor csak szöveget írsz; a jegyszámot (`#1234`), a neveket és a dátumokat a program ismeri fel.
 
+## Adatbázismotor
+
+A `.env` fájl `DB_ENGINE` sora dönti el, hol vannak az adatok:
+
+- `DB_ENGINE=json` – egyetlen JSON-fájl (`JSON_DB_FILE`, alapból `data/notetaker.json`), PostgreSQL nélkül.
+  A szerver az egészet memóriában tartja, és minden módosítás után újraírja a fájlt. Egy szerverfolyamatra
+  készült; mentéshez elég a fájlt lemásolni.
+- `DB_ENGINE=postgres` (ez az alapértelmezés) – PostgreSQL a `DATABASE_URL` alapján.
+
+A két motor ugyanúgy működik, a tesztek mindkettőn lefutnak. Egy különbség van: a keresés a Postgresben magyar
+szótövezést használ, a JSON-motor csak a szóvégeket (legfeljebb három betűt) hagyja el, így néha többet talál.
+
+**Átírás Postgresből JSON-ba:** `npm run export-json` – a `DATABASE_URL` adatbázis teljes tartalmát
+(a naplóval és a bejelentkezésekkel együtt) a `JSON_DB_FILE` fájlba írja. Meglévő fájlt csak
+`npm run export-json -- --force` ír felül.
+
 ## Indítás helyben
 
-1. Hozz létre két PostgreSQL adatbázist: `notetaker` és `notetaker_test`; az alkalmazás felhasználója legyen a tulajdonosuk.
-2. Másold a `.env.example` fájlt `.env` néven a repó gyökerébe, és írd át a kapcsolati adatokat.
+1. Postgres motorhoz: hozz létre két PostgreSQL adatbázist: `notetaker` és `notetaker_test`; az alkalmazás
+   felhasználója legyen a tulajdonosuk. JSON motorhoz ez a lépés kimarad.
+2. Másold a `.env.example` fájlt `.env` néven a repó gyökerébe, és állítsd be a `DB_ENGINE`-t (és Postgresnél a kapcsolati adatokat).
 3. `npm install`
 4. `npm run create-user` – bekéri az e-mailt, a nevet és a jelszót (legalább 10 karakter)
 5. `npm run build` – lefordítja a felületet
@@ -14,7 +31,7 @@ Rögzítéskor csak szöveget írsz; a jegyszámot (`#1234`), a neveket és a d�
 
 **Indítás egy lépésben:** `npm run up` (vagy dupla kattintás a `start.cmd` fájlra). Ez telepíti a függőségeket,
 lefordítja a felületet, és elindítja a szervert. A kódot nem tölti le; az a helyi munkapéldányból fut.
-A migrációk a szerver indításakor maguktól lefutnak.
+Postgresnél a migrációk a szerver indításakor maguktól lefutnak; JSON-nál a fájl az első indításkor jön létre.
 
 Fejlesztéshez két terminálban `npm run dev:server` és `npm run dev:web` (ez utóbbi a http://localhost:5173 címen
 fut, és mentéskor azonnal frissül).
@@ -41,14 +58,17 @@ fut, és mentéskor azonnal frissül).
 
 `npm test`
 
-A tesztek a `TEST_DATABASE_URL` adatbázist minden futáskor **törlik és újraépítik**, ezért annak a nevében
-szerepelnie kell a `test` szónak.
+A szervertesztek a JSON-motoron mindig lefutnak (ideiglenes fájlban), a Postgresen pedig akkor, ha a
+`TEST_DATABASE_URL` be van állítva. Ezt az adatbázist minden futáskor **törlik és újraépítik**, ezért annak a
+nevében szerepelnie kell a `test` szónak.
 
 ## Felépítés
 
-- `db/migrations/` – a séma, sorszámozott SQL fájlokban
+- `db/migrations/` – a Postgres-séma, sorszámozott SQL fájlokban
+- `server/src/store.ts` – az adatbázismotor felülete és kiválasztása (`DB_ENGINE`)
+- `server/src/json-db.ts`, `json-store.ts` – a JSON-motor: táblák, napló, fájlba mentés, és a lekérdezések
 - `server/src/recognize.ts` – jegyszám, név és dátum felismerése szabad szövegből
-- `server/src/nodes.ts` – rögzítés és szerkesztés, a felismert kapcsolatok mentése
+- `server/src/nodes.ts`, `notes.ts` – rögzítés és szerkesztés, a felismert kapcsolatok mentése (Postgres)
 - `server/src/auth.ts`, `app.ts` – bejelentkezés és az API
 - `web/src/` – a böngészős felület (React)
 

@@ -1,17 +1,16 @@
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
-import type { Db } from '../src/db.js';
-import { freshDb, TEST_PASSWORD, testUser } from './helpers.js';
+import { freshDb, nodeMap, TEST_PASSWORD, testUser, type TestDb } from './helpers.js';
 
-let db: Db;
+let db: TestDb;
 let app: FastifyInstance;
 let cookies: { sid: string };
 
 beforeAll(async () => {
   db = await freshDb();
   await testUser(db);
-  app = await buildApp({ db });
+  app = await buildApp({ store: db.store });
   const res = await app.inject({
     method: 'POST',
     url: '/api/login',
@@ -29,14 +28,14 @@ const create = async (payload: object) =>
   (await app.inject({ method: 'POST', url: '/api/nodes', payload, cookies })).json().node as { id: string };
 const move = (id: string, from: string, to: string) =>
   app.inject({ method: 'POST', url: `/api/nodes/${id}/move`, payload: { from, to }, cookies });
-const parentsOf = async (id: string) =>
-  (
-    await db.query(
-      `SELECT n.content, e.kind FROM edges e JOIN nodes n ON n.id = e.source_id
-       WHERE e.target_id = $1 AND e.kind IN ('unsorted', 'belongs_to') ORDER BY n.content`,
-      [id],
-    )
-  ).rows.map((r) => `${r.kind}:${r.content}`);
+const parentsOf = async (id: string) => {
+  const nodes = await nodeMap(db);
+  return (await db.rows('edges'))
+    .filter((e) => e.target_id === id && (e.kind === 'unsorted' || e.kind === 'belongs_to'))
+    .map((e) => ({ kind: e.kind, content: nodes.get(e.source_id as string)!.content as string }))
+    .sort((a, b) => (a.content < b.content ? -1 : a.content > b.content ? 1 : 0))
+    .map((r) => `${r.kind}:${r.content}`);
+};
 
 describe('áthelyezés húzással', () => {
   it('a bejegyzés a másik bejegyzés alá kerül; a többi szülője (pl. a meeting) megmarad', async () => {

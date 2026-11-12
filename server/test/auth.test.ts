@@ -1,16 +1,15 @@
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
-import type { Db } from '../src/db.js';
-import { freshDb, TEST_PASSWORD, testUser } from './helpers.js';
+import { freshDb, TEST_PASSWORD, testUser, type TestDb } from './helpers.js';
 
-let db: Db;
+let db: TestDb;
 let app: FastifyInstance;
 
 beforeAll(async () => {
   db = await freshDb();
   await testUser(db);
-  app = await buildApp({ db, loginAttemptsPerMinute: 4 });
+  app = await buildApp({ store: db.store, loginAttemptsPerMinute: 4 });
 });
 
 afterAll(async () => {
@@ -46,8 +45,8 @@ describe('bejelentkezés', () => {
     expect(me.json().user.email).toBe('teszt@example.com');
 
     // A munkamenet tokenje nem kerül nyersen az adatbázisba.
-    const stored = await db.query('SELECT token_hash FROM sessions');
-    expect(stored.rows.map((r) => r.token_hash)).not.toContain(sid.value);
+    const stored = await db.rows('sessions');
+    expect(stored.map((r) => r.token_hash)).not.toContain(sid.value);
 
     await app.inject({ method: 'POST', url: '/api/logout', cookies });
     expect((await app.inject({ url: '/api/me', cookies })).statusCode).toBe(401);
