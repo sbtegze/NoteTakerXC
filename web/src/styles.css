@@ -128,6 +128,11 @@ h3 {
   color: var(--muted);
 }
 
+/* A középen álló node műveletsorában is a jobb szélen. */
+.meta .link.icon {
+  margin-left: auto;
+}
+
 .link.icon:hover {
   color: var(--error);
 }

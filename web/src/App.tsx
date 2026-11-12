@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { api, ApiError, title, type Brief, type Detailed, type Entry, type Note, type NodeType, type Span, type User, type View } from './api';
+import { api, ApiError, INBOX_SYMBOL, title, type Brief, type Detailed, type Entry, type Note, type NodeType, type Span, type User, type View } from './api';
 
 interface Crumb {
   id: string;
@@ -172,7 +172,7 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
     } else {
       api
         .home()
-        .then(({ id }) => setPath([{ id, title: 'Bejövő' }]))
+        .then(({ id }) => setPath([{ id, title: INBOX_SYMBOL }]))
         .catch(fail);
     }
   }, [currentId, reload, fail]);
@@ -454,12 +454,16 @@ function Center(props: {
         <Editor initial={node.content} onSave={(content) => update({ content })} onCancel={() => setEditing(false)} />
       ) : (
         <>
-          <h1>
-            <RichText
-              node={{ content: first, spans: node.spans.filter((s) => s.end <= first.length) }}
-              onPick={props.onPick}
-              nodes={props.nodes}
-            />
+          <h1 title={node.is_inbox ? 'Bejövő' : undefined}>
+            {node.is_inbox ? (
+              INBOX_SYMBOL
+            ) : (
+              <RichText
+                node={{ content: first, spans: node.spans.filter((s) => s.end <= first.length) }}
+                onPick={props.onPick}
+                nodes={props.nodes}
+              />
+            )}
           </h1>
           {body && (
             <p className="body">
@@ -477,80 +481,81 @@ function Center(props: {
           ))}
         </p>
       )}
-      <div className="row meta">
-        <label>
-          Ez a node:
-          <select
-            value={node.type ?? ''}
-            disabled={node.is_inbox || node.type === 'ticket'}
-            title="Magát ezt a node-ot jelöli meg; egy emberre a szövegben @Név formában hivatkozz."
-            onChange={(e) => {
-              const next = (e.target.value || null) as NodeType | null;
-              // Egy mondatot ritkán akarunk emberré tenni: az első sor minden szava névvé válna.
-              const sentence = first!.trim().split(/\s+/).length > 2;
-              if (
-                next === 'person' &&
-                sentence &&
-                !window.confirm(
-                  `„${first}” maga lesz egy ember, és a program az első sor minden szavát a nevének tekinti.\n\n` +
-                    'Ha csak említeni akarsz valakit, írd a szövegbe így: @Név.\n\nBiztosan emberré teszed?',
-                )
-              ) {
-                return;
-              }
-              void update({ type: next });
-            }}
-          >
-            <option value="">–</option>
-            {(Object.keys(TYPE_LABEL) as NodeType[]).map((t) => (
-              <option key={t} value={t} disabled={t === 'ticket' && node.type !== 'ticket'}>
-                {TYPE_LABEL[t]}
-              </option>
-            ))}
-          </select>
-        </label>
-        {node.type === 'person' && (
+      {/* A Bejövőnek nincs neve, típusa, és nem szerkeszthető: nincs műveletsora. */}
+      {!node.is_inbox && (
+        <div className="row meta">
           <label>
-            Becenevek
-            <input
-              title="Ezekre a nevekre is ráismer a szövegekben, ragozva is."
-              value={aliases}
-              placeholder="pl. Szabolcs, Szabika"
-              onChange={(e) => setAliases(e.target.value)}
-              onBlur={() => {
-                const next = aliases.split(',').map((a) => a.trim()).filter(Boolean);
-                if (next.join(',') !== node.aliases.join(',')) void update({ aliases: next });
+            Ez a node:
+            <select
+              value={node.type ?? ''}
+              disabled={node.type === 'ticket'}
+              title="Magát ezt a node-ot jelöli meg; egy emberre a szövegben @Név formában hivatkozz."
+              onChange={(e) => {
+                const next = (e.target.value || null) as NodeType | null;
+                // Egy mondatot ritkán akarunk emberré tenni: az első sor minden szava névvé válna.
+                const sentence = first!.trim().split(/\s+/).length > 2;
+                if (
+                  next === 'person' &&
+                  sentence &&
+                  !window.confirm(
+                    `„${first}” maga lesz egy ember, és a program az első sor minden szavát a nevének tekinti.\n\n` +
+                      'Ha csak említeni akarsz valakit, írd a szövegbe így: @Név.\n\nBiztosan emberré teszed?',
+                  )
+                ) {
+                  return;
+                }
+                void update({ type: next });
               }}
-              onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
-            />
+            >
+              <option value="">–</option>
+              {(Object.keys(TYPE_LABEL) as NodeType[]).map((t) => (
+                <option key={t} value={t} disabled={t === 'ticket' && node.type !== 'ticket'}>
+                  {TYPE_LABEL[t]}
+                </option>
+              ))}
+            </select>
           </label>
-        )}
-        {!editing && !node.is_inbox && (
-          <button className="link" onClick={() => setEditing(true)}>
-            Szerkesztés
-          </button>
-        )}
-        {!node.is_inbox && (
+          {node.type === 'person' && (
+            <label>
+              Becenevek
+              <input
+                title="Ezekre a nevekre is ráismer a szövegekben, ragozva is."
+                value={aliases}
+                placeholder="pl. Szabolcs, Szabika"
+                onChange={(e) => setAliases(e.target.value)}
+                onBlur={() => {
+                  const next = aliases.split(',').map((a) => a.trim()).filter(Boolean);
+                  if (next.join(',') !== node.aliases.join(',')) void update({ aliases: next });
+                }}
+                onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+              />
+            </label>
+          )}
+          {!editing && (
+            <button className="link" onClick={() => setEditing(true)}>
+              Szerkesztés
+            </button>
+          )}
           <button className="link" onClick={props.onToggleContext}>
             {props.isContext ? 'Meeting lezárása' : 'Megnyitás meetingként'}
           </button>
-        )}
-        {!commenting && !node.is_inbox && (
-          <button className="link" onClick={() => setCommenting(true)}>
-            Komment
-          </button>
-        )}
-        {node.deletable && (
-          <DeleteButton
-            node={node}
-            onDeleted={(parentId) => props.onDeleted(parentId)}
-            onError={async (err) => {
-              onError(err);
-              await onChanged();
-            }}
-          />
-        )}
-      </div>
+          {!commenting && (
+            <button className="link" onClick={() => setCommenting(true)}>
+              Komment
+            </button>
+          )}
+          {node.deletable && (
+            <DeleteButton
+              node={node}
+              onDeleted={(parentId) => props.onDeleted(parentId)}
+              onError={async (err) => {
+                onError(err);
+                await onChanged();
+              }}
+            />
+          )}
+        </div>
+      )}
       <Notes
         nodeId={node.id}
         notes={node.notes}
@@ -676,6 +681,9 @@ function EntryRow({ entry, known, onPick, onChanged, onError }: { entry: Entry; 
             Szerkesztés
           </button>
         )}
+        <button className="link" onClick={() => onPick(entry)} title="Középre állítás">
+          Megnyitás
+        </button>
         {entry.deletable && (
           <DeleteButton
             node={entry}
@@ -686,9 +694,6 @@ function EntryRow({ entry, known, onPick, onChanged, onError }: { entry: Entry; 
             }}
           />
         )}
-        <button className="link" onClick={() => onPick(entry)} title="Középre állítás">
-          Megnyitás
-        </button>
       </div>
       {editing ? (
         <Editor initial={entry.content} onSave={saveEdit} onCancel={() => setEditing(false)} />

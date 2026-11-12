@@ -118,4 +118,7 @@ export const api = {
 };
 
 /** A node rövid neve: a szöveg első sora. */
-export const title = (n: { content: string }) => n.content.split('\n')[0] ?? '';
+/** A Bejövő jele: szöveges neve nincs a felületen. */
+export const INBOX_SYMBOL = '📥';
+export const title = (n: { content: string; is_inbox?: boolean }) =>
+  n.is_inbox ? INBOX_SYMBOL : (n.content.split('\n')[0] ?? '');
