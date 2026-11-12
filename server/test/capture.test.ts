@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app.js';
 import type { Db } from '../src/db.js';
+import { localDate } from '../src/nodes.js';
 import { freshDb, TEST_PASSWORD, testUser } from './helpers.js';
 
 let db: Db;
@@ -60,6 +61,60 @@ describe('rögzítés', () => {
     expect(await parentsOf(b.id)).toEqual([]);
   });
 
+  it('a /meeting és a /téma parancs elemet hoz létre a megadott címmel és a mai dátummal', async () => {
+    const today = localDate();
+    const topic = await create({ content: 'parancsos téma' });
+    const meeting = await create({ content: 'nyitott meeting', type: 'meeting' });
+
+    const res = await post({ content: '/meeting AI workshop\nnapirend: bemutató', parentId: topic.id, contextId: meeting.id });
+    expect(res.statusCode).toBe(201);
+    const node = res.json().node;
+    expect(node.type).toBe('meeting');
+    expect(node.content).toBe(`AI workshop ${today}\nnapirend: bemutató`);
+    // Ahová írtuk, oda kerül; a nyitott meetinghez nem kapcsolódik.
+    expect(await parentsOf(node.id)).toEqual(['parancsos téma']);
+
+    expect((await post({ content: '/téma Számlázás' })).json().node).toMatchObject({ type: 'topic', content: `Számlázás ${today}` });
+    expect((await post({ content: '/Tema Riport' })).json().node).toMatchObject({ type: 'topic', content: `Riport ${today}` });
+  });
+
+  it('mentéskor a relatív dátum elé a pontos dátum kerül (a rögzítés napjához képest)', async () => {
+    const today = localDate();
+    const node = (await post({ content: 'ma később kezd' })).json().node;
+    expect(node.content).toBe(`${today} ma később kezd`);
+    const res = await patch(node.id, { content: `${node.content}, holnap is`, version: node.version });
+    const tomorrow = new Date(`${today}T12:00:00Z`);
+    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+    expect(res.json().node.content).toBe(`${today} ma később kezd, ${tomorrow.toISOString().slice(0, 10)} holnap is`);
+  });
+
+  it('ha a címben számmal írt dátum van, nem kerül mögé még egy; a szöveges nap nem számít', async () => {
+    const today = localDate();
+    expect((await post({ content: '/meeting ERP technikai státusz 2026-11-10' })).json().node.content).toBe(
+      'ERP technikai státusz 2026-11-10',
+    );
+    expect((await post({ content: '/meeting Retro nov. 10' })).json().node.content).toBe('Retro nov. 10');
+    expect((await post({ content: '/meeting Pénteki retro' })).json().node.content).toBe(`Pénteki retro ${today}`);
+  });
+
+  it('ismeretlen parancs, cím nélküli parancs vagy szöveg közbeni perjel sima szöveg marad', async () => {
+    for (const content of ['/xyz valami', '/meeting', '/meeting   ', 'később /meeting AI', 'a/b teszt']) {
+      const node = (await post({ content })).json().node;
+      expect(node).toMatchObject({ type: null, content: content.trim() });
+    }
+  });
+
+  it('szerkesztéskor is hat a parancs, a rögzítés napjával; típusos node-nál szöveg marad', async () => {
+    const node = await create({ content: 'sima sor\nmásodik sor' });
+    const day = localDate(new Date((await db.query('SELECT created_at FROM nodes WHERE id = $1', [node.id])).rows[0].created_at));
+    const res = await patch(node.id, { content: '/meeting Utólag\nmásodik sor', version: node.version });
+    expect(res.json().node).toMatchObject({ type: 'meeting', content: `Utólag ${day}\nmásodik sor` });
+
+    const typed = await create({ content: 'egy téma', type: 'topic' });
+    const res2 = await patch(typed.id, { content: '/meeting Más', version: typed.version });
+    expect(res2.json().node).toMatchObject({ type: 'topic', content: '/meeting Más' });
+  });
+
   it('a meeting második szülőként kapcsolódik', async () => {
     const topic = await create({ content: 'IREMS' });
     const meeting = await create({ content: 'Heti egyeztetés', type: 'meeting' });
@@ -79,7 +134,8 @@ describe('rögzítés', () => {
 
     const dates = await datesOf(node.id);
     expect(dates).toHaveLength(1);
-    expect(dates[0]).toMatchObject({ source_text: 'nov. 20', confirmed: false });
+    // Mentéskor a pontos dátum elé került, a kettő egy felismert dátum.
+    expect(dates[0]).toMatchObject({ source_text: expect.stringMatching(/^\d{4}-11-20 nov\. 20$/), confirmed: false });
     expect(dates[0].starts_on).toBe(dates[0].ends_on);
     expect(dates[0].starts_on).toMatch(/-11-20$/);
 
@@ -121,8 +177,8 @@ describe('rögzítés', () => {
     await patch(created.id, { content: 'Szabi nincs dec 22–jan 2, holnap még bent', version: created.version });
     const dates = await datesOf(created.id);
     expect(dates.map((d) => [d.source_text, d.confirmed])).toEqual([
-      ['holnap', false],
-      ['dec 22–jan 2', true],
+      [expect.stringMatching(/^\d{4}-\d{2}-\d{2} holnap$/), false], // mentéskor a pontos dátum elé került
+      [expect.stringMatching(/^\d{4}-12-22–\d{4}-01-02 dec 22–jan 2$/), true],
     ]);
   });
 

@@ -9,6 +9,7 @@ import {
   deleteNode,
   getNeighborhood,
   getRoots,
+  moveNode,
   HttpError,
   searchNodes,
   updateNode,
@@ -118,6 +119,10 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
 
   app.delete<{ Params: { id: string }; Querystring: { version?: string } }>('/api/nodes/:id', async (req) =>
     deleteNode(db, req.user.id, req.params.id, Number(req.query.version)),
+  );
+
+  app.post<{ Params: { id: string }; Body: { from?: unknown; to?: unknown } }>('/api/nodes/:id/move', async (req) =>
+    moveNode(db, req.user.id, req.params.id, req.body?.from, req.body?.to),
   );
 
   // A kezdőlap: a legfelső szintű node-ok.

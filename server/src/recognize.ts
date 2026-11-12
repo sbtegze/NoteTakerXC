@@ -155,7 +155,41 @@ function findDates(text: string, today: string): Found[] {
     }
     merged.push(f);
   }
-  return merged;
+
+  // Ugyanaz a nap vagy időszak kétféleképpen, egymás mellett (2026-11-12 csütörtökön,
+  // 2026-12-22–2027-01-02 dec 22–jan 2): egy kiemelés. Az időszakok összevonása után.
+  const joined: Found[] = [];
+  for (const f of merged) {
+    const prev = joined.at(-1);
+    if (prev && /^\s+$/.test(text.slice(prev.end, f.start)) && prev.from === f.from && prev.to === f.to) {
+      joined[joined.length - 1] = { ...prev, end: f.end };
+    } else {
+      joined.push(f);
+    }
+  }
+  return joined;
+}
+
+// ---------- relatív dátum kiegészítése ----------
+
+// Az évvel megadott dátum egyértelmű; minden más (napnév, holnap, 20-án, december 10-én, 11.20)
+// a rögzítés napjától függ.
+const ABSOLUTE_DATE = /\d{4}/;
+
+/**
+ * Az év nélküli dátum (csütörtökön, holnap, jövő héten, 20-án, december 10-én) elé beírja a pontos dátumot:
+ * „csütörtökön később kezd” -> „2026-11-12 csütörtökön később kezd”. Időszaknál a két végpontot.
+ * Másodszorra nem ír elé, mert a kettő már egy kiemelés, benne évvel.
+ */
+export function anchorRelativeDates(text: string, today: string): string {
+  const relative = recognize(text, { today }).filter(
+    (s): s is DateSpan => s.kind === 'date' && !ABSOLUTE_DATE.test(s.text),
+  );
+  let out = text;
+  for (const s of relative.reverse()) {
+    out = `${out.slice(0, s.start)}${s.from === s.to ? s.from : `${s.from}–${s.to}`} ${out.slice(s.start)}`;
+  }
+  return out;
 }
 
 // ---------- nevek ----------

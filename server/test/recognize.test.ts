@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { matchesName, recognize, type Span } from '../src/recognize.js';
+import { anchorRelativeDates, matchesName, recognize, type Span } from '../src/recognize.js';
 
 // 2026-11-12 csütörtök
 const today = '2026-11-12';
@@ -194,6 +194,35 @@ describe('dátum', () => {
 
   it('a találat pontosan a szövegrészt jelöli', () => {
     expect(dates('Szabi nov. 20-ig szabin')).toEqual([['nov. 20', '2026-11-20', '2026-11-20']]);
+  });
+});
+
+describe('relatív dátum kiegészítése', () => {
+  const anchor = (text: string) => anchorRelativeDates(text, today);
+
+  it('a relatív dátum elé a pontos dátum kerül, időszaknál a két végpont', () => {
+    expect(anchor('csütörtökön később kezd')).toBe('2026-11-12 csütörtökön később kezd');
+    expect(anchor('holnap beadja, jövő héten szabin')).toBe('2026-11-13 holnap beadja, 2026-11-16–2026-11-22 jövő héten szabin');
+    expect(anchor('20-án kész, 3 nap múlva')).toBe('2026-11-20 20-án kész, 2026-11-15 3 nap múlva');
+  });
+
+  it('az év nélküli dátumot is kiegészíti', () => {
+    expect(anchor('december 10-én kész')).toBe('2026-12-10 december 10-én kész');
+    expect(anchor('nov. 20-ig, 11.20')).toBe('2026-11-20 nov. 20-ig, 2026-11-20 11.20');
+    expect(dates('2026-12-10 december 10-én')).toEqual([['2026-12-10 december 10', '2026-12-10', '2026-12-10']]);
+  });
+
+  it('az évvel megadott dátumhoz nem nyúl, és másodszorra sem ír elé', () => {
+    for (const t of ['2026-11-20', '2026.11.20. kész', 'semmi dátum']) expect(anchor(t)).toBe(t);
+    const once = anchor('csütörtökön később kezd');
+    expect(anchor(once)).toBe(once);
+  });
+
+  it('a kiegészített dátum egy kiemelés', () => {
+    expect(dates('2026-11-12 csütörtökön később kezd')).toEqual([['2026-11-12 csütörtökön', '2026-11-12', '2026-11-12']]);
+    expect(dates('2026-11-16–2026-11-22 jövő héten')).toEqual([
+      ['2026-11-16–2026-11-22 jövő héten', '2026-11-16', '2026-11-22'],
+    ]);
   });
 });
 

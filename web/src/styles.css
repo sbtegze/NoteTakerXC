@@ -454,6 +454,14 @@ button:disabled {
   border-color: var(--accent);
 }
 
+.capture-hint {
+  margin: -8px 0 0;
+}
+
+.editor-hint {
+  margin: 0;
+}
+
 .editor {
   display: grid;
   gap: 8px;
@@ -569,6 +577,11 @@ button:disabled {
   font: inherit;
 }
 
+.span.title-pill {
+  border-radius: 999px;
+  padding: 0 0.5em;
+}
+
 .span.date {
   background: var(--date-bg);
   color: var(--date);
@@ -644,6 +657,12 @@ button:disabled {
 .entry.clickable .entry-head,
 .entry.clickable .entry-text {
   cursor: pointer;
+}
+
+.entry.drop-here {
+  border-color: var(--accent);
+  border-style: dashed;
+  background: var(--bg);
 }
 
 .entry.clickable:hover {

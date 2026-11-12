@@ -19,7 +19,9 @@ const get = async (url: string) => (await app.inject({ url, cookies })).json();
 const create = async (payload: object) =>
   (await app.inject({ method: 'POST', url: '/api/nodes', payload, cookies })).json().node as Brief;
 const patch = (id: string, payload: object) => app.inject({ method: 'PATCH', url: `/api/nodes/${id}`, payload, cookies });
-const titles = (list: { content: string }[]) => list.map((n) => n.content);
+// A mentéskor a relatív dátumok elé kerülő pontos dátum (a teszt napjától függ) nélkül.
+const plain = (content: string) => content.replace(/\d{4}-\d{2}-\d{2}(?:–\d{4}-\d{2}-\d{2})? /g, '');
+const titles = (list: { content: string }[]) => list.map((n) => plain(n.content));
 
 let szabi: Brief, istvan: Brief, meeting: Brief, ticketId: string;
 
@@ -50,13 +52,13 @@ afterAll(async () => {
 
 describe('középre állítás', () => {
   it('az ősök a gyökérig, mindegyik a saját szüleivel; a kör nem akasztja meg', async () => {
-    const entry = (await get(`/api/nodes/${meeting.id}`)).below.find((n: Brief) => n.content.startsWith('István jövő'));
+    const entry = (await get(`/api/nodes/${meeting.id}`)).below.find((n: Brief) => plain(n.content).startsWith('István jövő'));
     const sub = await create({ content: 'Al-bejegyzés', parentId: entry.id });
     const view = await get(`/api/nodes/${sub.id}`);
     const byId = new Map(view.ancestors.map((a: Brief & { parent_ids: string[] }) => [a.id, a]));
     const chain = (id: string): string[] => {
       const a = byId.get(id) as (Brief & { parent_ids: string[] }) | undefined;
-      return a ? [a.content, ...a.parent_ids.flatMap(chain)] : [];
+      return a ? [plain(a.content), ...a.parent_ids.flatMap(chain)] : [];
     };
     expect(titles(view.parents)).toEqual(['István jövő héten nincs']);
     expect(chain(entry.id)).toEqual(['István jövő héten nincs', 'Heti egyeztetés 11.10.']);
@@ -74,7 +76,7 @@ describe('középre állítás', () => {
   });
 
   it('kérésre a bejegyzések alatti szinteket is adja, legfeljebb a kért mélységig', async () => {
-    const entry = (await get(`/api/nodes/${meeting.id}`)).below.find((n: Brief) => n.content.startsWith('István jövő'));
+    const entry = (await get(`/api/nodes/${meeting.id}`)).below.find((n: Brief) => plain(n.content).startsWith('István jövő'));
     const lvl1 = (await get(`/api/nodes/${entry.id}`)).below.find((n: Brief) => n.content === 'Al-bejegyzés');
     const lvl2 = await create({ content: 'második szint', parentId: lvl1.id });
     await create({ content: 'harmadik szint', parentId: lvl2.id });
@@ -108,15 +110,31 @@ describe('középre állítás', () => {
     expect(view.below[0].is_child).toBe(false);
     expect(titles(view.below[0].contexts)).toEqual(['Heti egyeztetés 11.10.']);
     expect(view.below[0].dates).toHaveLength(1);
-    // Kik érintettek a jegyben: a legutóbb említett elöl.
-    expect(titles(view.connected)).toEqual(['István', 'Szabi']);
+    // Kik érintettek a jegyben: a legutóbb említett elöl; utánuk a meeting, ahol elhangzott.
+    expect(titles(view.connected)).toEqual(['István', 'Szabi', 'Heti egyeztetés 11.10.']);
+    // Hol említik: a meeting az említő bejegyzések szülője.
+    expect(view.mention_parent_ids).toEqual([meeting.id]);
+    expect(titles(view.ancestors)).toEqual(['Heti egyeztetés 11.10.']);
   });
 
   it('az embernél látszik, miben érintett', async () => {
     const view = await get(`/api/nodes/${istvan.id}`);
     expect(titles(view.below)).toEqual(['#1234: Istvánra várunk a specifikáció miatt', 'István jövő héten nincs']);
-    expect(titles(view.connected)).toEqual(['#1234']);
+    expect(titles(view.connected)).toEqual(['#1234', 'Heti egyeztetés 11.10.']);
     expect(titles(view.parents)).toEqual([]);
+  });
+
+  it('a jegynél az említés útvonala és a felette lévő szintek kapcsolatai is látszanak', async () => {
+    const erp = await create({ content: 'ERP státusz', type: 'meeting' });
+    const head = await create({ content: '@Ákos', parentId: erp.id });
+    await create({ content: '#5589', parentId: head.id });
+    const ticket = (await db.query('SELECT id FROM nodes WHERE ticket_no = 5589')).rows[0];
+
+    const view = await get(`/api/nodes/${ticket.id}`);
+    expect(view.mention_parent_ids).toEqual([head.id]);
+    const byId = new Map(view.ancestors.map((a: Brief & { parent_ids: string[] }) => [a.id, a]));
+    expect((byId.get(head.id) as { parent_ids: string[] }).parent_ids).toEqual([erp.id]);
+    expect(titles(view.connected)).toEqual(expect.arrayContaining(['Ákos', 'ERP státusz']));
   });
 
   it('a meetingnél az ott rögzített bejegyzések és az érintettek', async () => {
@@ -134,6 +152,26 @@ describe('középre állítás', () => {
       ['ticket', ticketId],
       ['date', undefined],
     ]);
+  });
+
+  it('a „Kapcsolódik” alatt az alatta lévő meetingek és témák is, három szint mélységig', async () => {
+    const root = await create({ content: 'státusz meeting', type: 'meeting' });
+    const dev = await create({ content: '@Ödön', parentId: root.id });
+    const near = await create({ content: '/meeting FDD workshop', parentId: dev.id });
+    const deep1 = await create({ content: 'al: a #4321 és @Kálmán', parentId: near.id }); // 3. szint
+    const deep2 = await create({ content: '/téma Mély téma', parentId: deep1.id }); // 4. szint: már nem
+    const topic = await create({ content: '/téma Számlázás', parentId: root.id });
+
+    const view = await get(`/api/nodes/${root.id}`);
+    const typed = view.connected.filter((n: Brief) => n.type === 'meeting' || n.type === 'topic');
+    expect(titles(typed).map((t) => t.replace(/ \d{4}-\d{2}-\d{2}$/, '')).sort()).toEqual(['FDD workshop', 'Számlázás']);
+    expect(titles(view.connected)).toContain('Ödön'); // az említett ember továbbra is
+    // A mélyebb szinten említett jegy és ember is.
+    expect(titles(view.connected)).toEqual(expect.arrayContaining(['#4321', 'Kálmán']));
+    for (const n of [deep2, deep1, near, topic, dev, root]) {
+      await db.query('DELETE FROM edges WHERE $1 IN (source_id, target_id)', [n.id]);
+      await db.query('DELETE FROM nodes WHERE id = $1', [n.id]);
+    }
   });
 
   it('ismeretlen node 404, hibás azonosító 400', async () => {

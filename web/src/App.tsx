@@ -7,6 +7,8 @@ interface Crumb {
 }
 
 const TYPE_LABEL: Record<NodeType, string> = { person: 'Ember', ticket: 'Jegy', meeting: 'Meeting', topic: 'Téma' };
+/** A bejegyzés első sorában írható parancsok (a szerver nodes.ts COMMANDS listájával egyezik). */
+const COMMAND_TYPES: Record<string, NodeType> = { meeting: 'meeting', téma: 'topic', tema: 'topic' };
 const GROUPS: [NodeType | null, string][] = [
   ['person', 'Emberek'],
   ['ticket', 'Jegyek'],
@@ -47,17 +49,17 @@ function pathFromHistory(): Crumb[] {
   return id ? [{ id, title: '' }] : []; // a nevet a betöltés pótolja
 }
 
-/** A szövegből felismert nap: ÉÉÉÉ-HH-NN, nnn (pl. 2026-11-12, csü). */
-const fmtDay = (iso: string) => `${iso}, ${WEEKDAY3[new Date(`${iso}T00:00:00`).getDay()]}`;
+/** A szövegből felismert nap: ÉÉÉÉ-HH-NN, napnév (pl. 2026-11-12, csütörtök). */
+const fmtDay = (iso: string) => `${iso}, ${WEEKDAYS[new Date(`${iso}T00:00:00`).getDay()]}`;
 const fmtRange = (from: string, to: string) => (from === to ? fmtDay(from) : `${fmtDay(from)} – ${fmtDay(to)}`);
-/** Időpont: ÉÉÉÉ-HH-NN, nnn, óó:pp (pl. 2026-11-12, csü, 09:30), helyi idő szerint. */
-const WEEKDAY3 = ['vas', 'hét', 'ked', 'sze', 'csü', 'pén', 'szo'];
+/** Időpont: ÉÉÉÉ-HH-NN, napnév, óó:pp (pl. 2026-11-12, csütörtök, 09:30), helyi idő szerint. */
+const WEEKDAYS = ['vasárnap', 'hétfő', 'kedd', 'szerda', 'csütörtök', 'péntek', 'szombat'];
 const pad2 = (n: number) => String(n).padStart(2, '0');
 const fmtStamp = (iso: string) => {
   const d = new Date(iso);
   return (
     `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}, ` +
-    `${WEEKDAY3[d.getDay()]}, ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+    `${WEEKDAYS[d.getDay()]}, ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
   );
 };
 
@@ -259,7 +261,14 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
         <main className="map" key={view.center.id}>
           <aside className="side">
             <h2>Ide tartozik</h2>
-            {view.parents.length ? <Ancestors view={view} onPick={go} /> : <p className="empty">Legfelső szintű</p>}
+            {view.parents.length > 0 && <Ancestors view={view} onPick={go} />}
+            {view.mention_parent_ids.length > 0 && (
+              <div className="group">
+                <h3>Említve itt</h3>
+                <MentionTree view={view} onPick={go} />
+              </div>
+            )}
+            {!view.parents.length && !view.mention_parent_ids.length && <p className="empty">Legfelső szintű</p>}
           </aside>
 
           <section className="middle">
@@ -369,7 +378,7 @@ function Chips({ nodes, onPick, counts }: { nodes: (Brief & { mentions?: number 
     <ul className="chips">
       {nodes.map((n) => (
         <li key={n.id}>
-          <button className={`chip type-${n.type ?? 'none'}`} onClick={() => onPick(n)} title={n.content}>
+          <button className={`chip type-${chipType(n)}`} onClick={() => onPick(n)} title={n.content}>
             <span className="chip-title">{title(n)}</span>
             {counts && n.mentions! > 1 && <span className="count">{n.mentions}</span>}
           </button>
@@ -417,6 +426,57 @@ function DeleteButton(props: {
   );
 }
 
+/**
+ * A címke színe: a node típusa; a típus nélküli, csak egy emberre vagy jegyre hivatkozó node
+ * (pl. „@Ákos”, „#5589”) a hivatkozott dolog színét kapja.
+ */
+function chipType(n: { content: string; type: NodeType | null }): string {
+  if (n.type) return n.type;
+  const t = title(n).trim();
+  if (/^@\p{L}+(?: \p{Lu}\p{Ll}+){0,2}$/u.test(t)) return 'person';
+  if (/^#\d+$/.test(t)) return 'ticket';
+  return 'none';
+}
+
+/**
+ * „Említve itt”: ahol a node-ot említik, felülről lefelé. Felül a legfelső szintű node-ok, alattuk beljebb
+ * az alábontás, egészen az említő bejegyzések szülőjéig; minden szinten a legújabb elöl.
+ */
+function MentionTree({ view, onPick }: { view: View; onPick: (n: Brief) => void }) {
+  const byId = new Map(view.ancestors.map((a) => [a.id, a]));
+  // Az említő bejegyzések szülei és minden ősük.
+  const inTree = new Set<string>();
+  const collect = (id: string) => {
+    if (inTree.has(id) || !byId.has(id) || id === view.center.id) return;
+    inTree.add(id);
+    byId.get(id)!.parent_ids.forEach(collect);
+  };
+  view.mention_parent_ids.forEach(collect);
+  const newestFirst = (ids: string[]) =>
+    ids.map((id) => byId.get(id)!).sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const childrenOf = (id: string) =>
+    newestFirst([...inTree].filter((c) => byId.get(c)!.parent_ids.includes(id)));
+  const roots = newestFirst([...inTree].filter((id) => !byId.get(id)!.parent_ids.some((p) => inTree.has(p))));
+
+  const branch = (nodes: typeof roots, seen: Set<string>): ReactNode => {
+    const shown = nodes.filter((n) => !seen.has(n.id)); // a kör nem pörög körbe
+    if (!shown.length) return null;
+    return (
+      <ul className="tree">
+        {shown.map((n) => (
+          <li key={n.id}>
+            <button className={`chip type-${chipType(n)}`} onClick={() => onPick(n)} title={n.content}>
+              <span className="chip-title">{title(n)}</span>
+            </button>
+            {branch(childrenOf(n.id), new Set([...seen, n.id]))}
+          </li>
+        ))}
+      </ul>
+    );
+  };
+  return branch(roots, new Set());
+}
+
 /** Az ősök fája: a közvetlen szülők, alattuk beljebb a saját szüleik, egészen a gyökérig. */
 function Ancestors({ view, onPick }: { view: View; onPick: (n: Brief) => void }) {
   const byId = new Map(view.ancestors.map((a) => [a.id, a]));
@@ -429,7 +489,7 @@ function Ancestors({ view, onPick }: { view: View; onPick: (n: Brief) => void })
           const a = byId.get(id)!;
           return (
             <li key={id}>
-              <button className={`chip type-${a.type ?? 'none'}`} onClick={() => onPick(a)} title={a.content}>
+              <button className={`chip type-${chipType(a)}`} onClick={() => onPick(a)} title={a.content}>
                 <span className="chip-title">{title(a)}</span>
               </button>
               {branch(a.parent_ids, new Set([...seen, id]))}
@@ -443,6 +503,20 @@ function Ancestors({ view, onPick }: { view: View; onPick: (n: Brief) => void })
     view.parents.map((p) => p.id),
     new Set([view.center.id]),
   );
+}
+
+/** A meeting és a téma címe (az első sora) egészben egy pill, a típus színével. */
+const hasTitlePill = (n: { type: NodeType | null }) => n.type === 'meeting' || n.type === 'topic';
+function TitlePill({ node }: { node: { content: string; type: NodeType | null } }) {
+  return <span className={`span title-pill type-${node.type}`}>{title(node)}</span>;
+}
+/** A szöveg az első sor után (a sortöréssel együtt), a felismert részek helyével eltolva. */
+function afterFirstLine(n: { content: string; spans: Span[] }) {
+  const cut = title(n).length;
+  return {
+    content: n.content.slice(cut),
+    spans: n.spans.filter((s) => s.start >= cut).map((s) => ({ ...s, start: s.start - cut, end: s.end - cut })),
+  };
 }
 
 /** A szöveg a felismert részekkel: a jegy és a név kattintható, a dátum kiemelt. */
@@ -483,8 +557,31 @@ function RichText({ node, onPick, nodes }: { node: { content: string; spans: Spa
   return <span className="rich">{parts}</span>;
 }
 
-function Editor({ initial, onSave, onCancel }: { initial: string; onSave: (text: string) => Promise<void>; onCancel: () => void }) {
+/** A helyi nap ÉÉÉÉ-HH-NN alakban. */
+const localDay = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+
+/**
+ * Tipp a „/parancs cím” első sorhoz: mit hoz létre belőle a szerver (nodes.ts, parseCommand).
+ * `day` a rögzítés napja, ez kerül a cím mögé; `when` pl. „Enterre” vagy „Mentéskor”.
+ */
+function commandHint(text: string, day: string, when: string): string | null {
+  const cmd = /^\/(\p{L}*)(?:[ \t]+(\S.*))?$/u.exec((text.split('\n')[0] ?? '').trim());
+  if (!cmd) return null;
+  const type = COMMAND_TYPES[cmd[1]!.toLowerCase()];
+  if (type && cmd[2]) {
+    // Ha a címben számmal írt dátum van, a szerver nem ír mögé még egyet (nodes.ts, parseCommand).
+    const name = cmd[2].trim();
+    const dated = /\d{4}[-.]\s?\d{1,2}[-.]\s?\d{1,2}|(?<![\d.])\d{1,2}\.\s?\d{1,2}(?!\d)|(?:jan|feb|márc|ápr|máj|jún|júl|aug|szept|okt|nov|dec)\p{L}*\.?\s*\d{1,2}/iu.test(name);
+    return `${when} ${TYPE_LABEL[type]} lesz belőle: „${dated ? name : `${name} ${day}`}”`;
+  }
+  if (type) return `Írd a parancs után a címet, pl. /${cmd[1]} AI workshop`;
+  return 'Parancsok: /meeting cím, /téma cím. Más perjeles sor sima szöveg marad.';
+}
+
+/** commandDay: ha megadjuk (típus nélküli node rögzítésének napja), a parancs-tippet is mutatja. */
+function Editor({ initial, onSave, onCancel, commandDay }: { initial: string; onSave: (text: string) => Promise<void>; onCancel: () => void; commandDay?: string }) {
   const [text, setText] = useState(initial);
+  const hint = commandDay ? commandHint(text, commandDay, 'Mentéskor') : null;
   const [busy, setBusy] = useState(false);
   const submit = async () => {
     if (!text.trim() || busy) return;
@@ -502,6 +599,7 @@ function Editor({ initial, onSave, onCancel }: { initial: string; onSave: (text:
   return (
     <div className="editor">
       <textarea value={text} onChange={(e) => setText(e.target.value)} onKeyDown={onKey} autoFocus rows={Math.max(2, text.split('\n').length)} />
+      {hint && <p className="hint editor-hint">{hint}</p>}
       <div className="row">
         <button onClick={() => void submit()} disabled={busy || !text.trim()}>
           Mentés
@@ -542,6 +640,13 @@ function Center(props: {
 
   const [first = '', ...rest] = node.content.split('\n');
   const body = rest.join('\n').trim();
+  // Ha a szöveg csak egy ember vagy jegy (pl. „@Sanyi”, „#5589”), a node csak hivatkozás: nem kap típust.
+  // Ha mégis van típusa (régebbről), a választó megmarad, hogy vissza lehessen állítani.
+  const onlyReference =
+    node.type === null &&
+    node.spans.length === 1 &&
+    node.spans[0]!.kind !== 'date' &&
+    node.content.trim() === node.spans[0]!.text;
 
   return (
     <article className={`center type-${node.type ?? 'none'}`}>
@@ -549,15 +654,24 @@ function Center(props: {
         {fmtStamp(node.created_at)}
       </time>
       {editing ? (
-        <Editor initial={node.content} onSave={(content) => update({ content })} onCancel={() => setEditing(false)} />
+        <Editor
+          initial={node.content}
+          onSave={(content) => update({ content })}
+          onCancel={() => setEditing(false)}
+          commandDay={node.type === null ? localDay(new Date(node.created_at)) : undefined}
+        />
       ) : (
         <>
           <h1>
-            <RichText
-              node={{ content: first, spans: node.spans.filter((s) => s.end <= first.length) }}
-              onPick={props.onPick}
-              nodes={props.nodes}
-            />
+            {hasTitlePill(node) ? (
+              <TitlePill node={node} />
+            ) : (
+              <RichText
+                node={{ content: first, spans: node.spans.filter((s) => s.end <= first.length) }}
+                onPick={props.onPick}
+                nodes={props.nodes}
+              />
+            )}
           </h1>
           {body && (
             <p className="body">
@@ -567,26 +681,28 @@ function Center(props: {
         </>
       )}
       <div className="row meta">
-        <label>
-          Ez a node:
-          {/* Az embert a @Név, a jegyet a #1234 hozza létre; ezeknél a típus nem változtatható. */}
-          <select
-            value={node.type ?? ''}
-            disabled={node.type === 'ticket' || node.type === 'person'}
-            title="Magát ezt a node-ot jelöli meg. Embert a szövegben @Név formában hozz létre."
-            onChange={(e) => void update({ type: (e.target.value || null) as NodeType | null })}
-          >
-            {node.type === 'ticket' || node.type === 'person' ? (
-              <option value={node.type}>{TYPE_LABEL[node.type]}</option>
-            ) : (
-              <>
-                <option value="">–</option>
-                <option value="meeting">{TYPE_LABEL.meeting}</option>
-                <option value="topic">{TYPE_LABEL.topic}</option>
-              </>
-            )}
-          </select>
-        </label>
+        {!onlyReference && (
+          <label>
+            Ez a node:
+            {/* Az embert a @Név, a jegyet a #1234 hozza létre; ezeknél a típus nem változtatható. */}
+            <select
+              value={node.type ?? ''}
+              disabled={node.type === 'ticket' || node.type === 'person'}
+              title="Magát ezt a node-ot jelöli meg. Embert a szövegben @Név formában hozz létre."
+              onChange={(e) => void update({ type: (e.target.value || null) as NodeType | null })}
+            >
+              {node.type === 'ticket' || node.type === 'person' ? (
+                <option value={node.type}>{TYPE_LABEL[node.type]}</option>
+              ) : (
+                <>
+                  <option value="">–</option>
+                  <option value="meeting">{TYPE_LABEL.meeting}</option>
+                  <option value="topic">{TYPE_LABEL.topic}</option>
+                </>
+              )}
+            </select>
+          </label>
+        )}
         {node.type === 'person' && (
           <label>
             Becenevek
@@ -611,8 +727,9 @@ function Center(props: {
         <button
           className="link"
           onClick={() => {
-            // Amit meetingként nyitunk meg, az meeting; a típusos (ember, jegy, téma) node nem változik.
-            if (!props.isContext && node.type === null) void update({ type: 'meeting' });
+            // Amit meetingként nyitunk meg, az meeting; a típusos (ember, jegy, téma) és a csak
+            // hivatkozásból álló (pl. „@Sanyi”) node nem változik.
+            if (!props.isContext && node.type === null && !onlyReference) void update({ type: 'meeting' });
             props.onToggleContext();
           }}
         >
@@ -627,8 +744,8 @@ function Center(props: {
           node={node}
           onDeleted={(parentId) => props.onDeleted(parentId)}
           onError={async (err) => {
+            await onChanged(); // előbb újratöltünk, mert az a hibaüzenetet törli
             onError(err);
-            await onChanged();
           }}
         />
       </div>
@@ -669,21 +786,26 @@ function Capture(props: {
     }
   };
 
+  const hint = commandHint(text, localDay(new Date()), 'Enterre');
+
   return (
-    <textarea
-      ref={props.inputRef}
-      className="capture"
-      rows={Math.min(8, Math.max(1, text.split('\n').length))}
-      value={text}
-      placeholder={`Új bejegyzés ide: ${props.target} – Enter ment, Shift+Enter új sor`}
-      onChange={(e) => setText(e.target.value)}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-          e.preventDefault();
-          void submit();
-        }
-      }}
-    />
+    <>
+      <textarea
+        ref={props.inputRef}
+        className="capture"
+        rows={Math.min(8, Math.max(1, text.split('\n').length))}
+        value={text}
+        placeholder={`Új bejegyzés ide: ${props.target} – Enter ment, Shift+Enter új sor`}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+            e.preventDefault();
+            void submit();
+          }
+        }}
+      />
+      {hint && <p className="hint capture-hint">{hint}</p>}
+    </>
   );
 }
 
@@ -696,16 +818,17 @@ function Below(props: {
   onError: (e: unknown) => void;
 }) {
   const { view, tree, onPick, onChanged, onError } = props;
-  // A típusos gyerekek (ember, jegy, meeting, téma) elemek; a többi bejegyzés.
-  const items = view.below.filter((n) => n.is_child && n.type);
-  const top = view.below.filter((n) => !(n.is_child && n.type));
+  // Minden alárendelt és említő node egy listában; a típusost (pl. meeting) a fejlécében címke jelzi.
+  const top = view.below;
   const known = [...view.connected, ...view.parents, ...view.below, ...view.deeper, view.center];
 
   // Egyszintű: a legfrissebb elöl. Többszintű: időrendben, mindegyik alatt a saját albejegyzései,
   // szintenként kicsit beljebb; a kör nem pörög körbe.
-  const rows: { entry: Entry; depth: number }[] = [];
+  // parentId: ahonnan húzással áthelyezhető; a csak említés miatt itt álló bejegyzésnél nincs ilyen.
+  const rows: { entry: Entry; depth: number; parentId?: string }[] = [];
+  const topParent = (e: Entry) => (e.is_child ? view.center.id : undefined);
   if (!tree) {
-    for (const e of [...top].reverse()) rows.push({ entry: e, depth: 0 });
+    for (const e of [...top].reverse()) rows.push({ entry: e, depth: 0, parentId: topParent(e) });
   } else {
     const byId = new Map(view.deeper.map((d) => [d.id, d]));
     const childrenOf = (id: string) =>
@@ -713,26 +836,18 @@ function Below(props: {
         .filter((e) => e.parent_id === id)
         .flatMap((e) => byId.get(e.child_id) ?? [])
         .sort((a, b) => a.created_at.localeCompare(b.created_at));
-    const walk = (entry: Entry, depth: number, seen: Set<string>) => {
-      rows.push({ entry, depth });
+    const walk = (entry: Entry, depth: number, parentId: string | undefined, seen: Set<string>) => {
+      rows.push({ entry, depth, parentId });
       if (depth >= TREE_DEPTH) return;
       for (const c of childrenOf(entry.id)) {
-        if (!seen.has(c.id)) walk({ ...c, is_child: true, contexts: [] }, depth + 1, new Set([...seen, c.id]));
+        if (!seen.has(c.id)) walk({ ...c, is_child: true, contexts: [] }, depth + 1, entry.id, new Set([...seen, c.id]));
       }
     };
-    for (const e of top) walk(e, 0, new Set([view.center.id, e.id]));
+    for (const e of top) walk(e, 0, topParent(e), new Set([view.center.id, e.id]));
   }
 
   return (
     <>
-      {items.length > 0 && (
-        <section className="items">
-          <h2>
-            Elemek <span className="count">{items.length}</span>
-          </h2>
-          <Chips nodes={items} onPick={onPick} />
-        </section>
-      )}
       <section className="entries">
         <div className="entries-head">
           <h2>
@@ -753,11 +868,12 @@ function Below(props: {
         </div>
         {top.length === 0 && <p className="empty">Még nincs bejegyzés. Írj egyet a fenti mezőbe.</p>}
         <ul>
-          {rows.map(({ entry, depth }, i) => (
+          {rows.map(({ entry, depth, parentId }, i) => (
             <EntryRow
               key={`${entry.id}-${i}`}
               entry={entry}
               depth={depth}
+              parentId={parentId}
               known={known}
               onPick={onPick}
               onChanged={onChanged}
@@ -770,9 +886,40 @@ function Below(props: {
   );
 }
 
-function EntryRow({ entry, depth = 0, known, onPick, onChanged, onError }: { entry: Entry; depth?: number; known: Brief[]; onPick: (n: Brief) => void; onChanged: () => Promise<void>; onError: (e: unknown) => void }) {
+/** Húzás közben ebben adjuk át, mit és honnan húzunk. */
+const DRAG_TYPE = 'application/x-notetaker-node';
+
+function EntryRow({ entry, depth = 0, parentId, known, onPick, onChanged, onError }: { entry: Entry; depth?: number; parentId?: string; known: Brief[]; onPick: (n: Brief) => void; onChanged: () => Promise<void>; onError: (e: unknown) => void }) {
   const [editing, setEditing] = useState(false);
   const [commenting, setCommenting] = useState(false);
+  const [dropHere, setDropHere] = useState(false);
+
+  // Húzással áthelyezés: a ráejtett bejegyzés ez alá kerül.
+  const onDragStart = (e: React.DragEvent) => {
+    e.dataTransfer.setData(DRAG_TYPE, JSON.stringify({ id: entry.id, from: parentId }));
+    e.dataTransfer.effectAllowed = 'move';
+  };
+  const onDragOver = (e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes(DRAG_TYPE)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDropHere(true);
+  };
+  const onDrop = async (e: React.DragEvent) => {
+    setDropHere(false);
+    const raw = e.dataTransfer.getData(DRAG_TYPE);
+    if (!raw) return;
+    e.preventDefault();
+    const { id, from } = JSON.parse(raw) as { id: string; from: string };
+    if (id === entry.id) return;
+    try {
+      await api.move(id, from, entry.id);
+      await onChanged();
+    } catch (err) {
+      await onChanged(); // előbb újratöltünk, mert az a hibaüzenetet törli
+      onError(err);
+    }
+  };
 
   const saveEdit = async (content: string) => {
     try {
@@ -793,14 +940,19 @@ function EntryRow({ entry, depth = 0, known, onPick, onChanged, onError }: { ent
 
   return (
     <li
-      className={editing ? 'entry' : 'entry clickable'}
+      className={`${editing ? 'entry' : 'entry clickable'}${dropHere ? ' drop-here' : ''}`}
       style={depth ? { marginLeft: `${depth * 20}px` } : undefined}
       onClick={open}
+      draggable={!editing && !!parentId}
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDragLeave={() => setDropHere(false)}
+      onDrop={(e) => void onDrop(e)}
     >
       <div className="entry-head">
         <time dateTime={entry.created_at}>{fmtStamp(entry.created_at)}</time>
         {entry.contexts.map((c) => (
-          <button key={c.id} className={`chip small type-${c.type ?? 'none'}`} onClick={() => onPick(c)}>
+          <button key={c.id} className={`chip small type-${chipType(c)}`} onClick={() => onPick(c)}>
             {title(c)}
           </button>
         ))}
@@ -822,16 +974,28 @@ function EntryRow({ entry, depth = 0, known, onPick, onChanged, onError }: { ent
           node={entry}
           onDeleted={() => void onChanged()}
           onError={async (err) => {
+            await onChanged(); // előbb újratöltünk, mert az a hibaüzenetet törli
             onError(err);
-            await onChanged();
           }}
         />
       </div>
       {editing ? (
-        <Editor initial={entry.content} onSave={saveEdit} onCancel={() => setEditing(false)} />
+        <Editor
+          initial={entry.content}
+          onSave={saveEdit}
+          onCancel={() => setEditing(false)}
+          commandDay={entry.type === null ? localDay(new Date(entry.created_at)) : undefined}
+        />
       ) : (
         <p className="entry-text">
-          <RichText node={entry} onPick={onPick} nodes={known} />
+          {hasTitlePill(entry) ? (
+            <>
+              <TitlePill node={entry} />
+              <RichText node={afterFirstLine(entry)} onPick={onPick} nodes={known} />
+            </>
+          ) : (
+            <RichText node={entry} onPick={onPick} nodes={known} />
+          )}
         </p>
       )}
       <Notes

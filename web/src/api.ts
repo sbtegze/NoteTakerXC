@@ -66,7 +66,9 @@ export interface View {
   center: Detailed;
   parents: Brief[];
   /** Minden ős a gyökérig, a saját szülei azonosítójával. */
-  ancestors: (Brief & { parent_ids: string[] })[];
+  ancestors: (Brief & { created_at: string; parent_ids: string[] })[];
+  /** Az őt (máshol) említő bejegyzések szülei: innen indul az „Említve itt” fa. */
+  mention_parent_ids: string[];
   below: Entry[];
   connected: Connected[];
   /** Többszintű nézetben a bejegyzések alatti szintek node-jai és kapcsolatai. */
@@ -116,6 +118,7 @@ export const api = {
   updateNote: (id: string, version: number, content: string) =>
     call<{ note: Note }>('PATCH', `/api/notes/${id}`, { version, content }),
   deleteNote: (id: string, version: number) => call('DELETE', `/api/notes/${id}?version=${version}`),
+  move: (id: string, from: string, to: string) => call<{ ok: true }>('POST', `/api/nodes/${id}/move`, { from, to }),
   deleteNode: (id: string, version: number) =>
     call<{ parentId: string | null }>('DELETE', `/api/nodes/${id}?version=${version}`),
 };

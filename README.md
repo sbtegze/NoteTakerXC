@@ -27,6 +27,10 @@ fut, és mentéskor azonnal frissül).
 - **Keresés:** Ctrl+K. Ha nincs találat, az Enter új, legfelső szintű node-ot hoz létre.
 - **Emberek:** írd a szövegbe így: `@Név` (többtagú is lehet: `@Mátrai Peti`). Ha még nincs ilyen ember, létrejön,
   és utána `@` nélkül, ragozva is felismeri.
+- **Parancsok:** ha egy bejegyzés első sora `/meeting cím` vagy `/téma cím`, abból Meeting vagy Téma típusú
+  elem lesz a címmel és a rögzítés napjával (`/meeting AI workshop` → „AI workshop 2026-11-12”). Az alatta lévő
+  sorok a szövegébe kerülnek. Ott jön létre, ahová írod; a kezdőlapon legfelső szintű lesz. Egy meglévő, típus
+  nélküli bejegyzést átszerkesztve is működik.
 - **Meeting:** a „Megnyitás meetingként” után minden új bejegyzés a meetinghez is kapcsolódik, bárhová írod.
 
 ## Tesztek

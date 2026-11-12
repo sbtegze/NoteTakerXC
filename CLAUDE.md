@@ -31,11 +31,17 @@ Ez a hét kérdés az MVP mércéje: valódi meetingek után mindegyikre legfelj
   nem csupa nagybetűs szavak is a névhez tartoznak, legfeljebb három tagig (`@Ákos FDD` → Ákos); az ismert
   teljes név ennél erősebb.
 - **Dátum:** év nélkül a rögzítés napjához legközelebbi előfordulás. A relatív dátum a node `created_at` napjához
-  képest értendő.
+  képest értendő. Mentéskor az év nélküli dátum (csütörtökön, holnap, 20-án, december 10-én, 11.20) elé a
+  pontos dátum kerül a szövegbe („2026-11-12 csütörtökön”), és a kettő egy kiemelés; a meeting és a téma
+  címsora kimarad. A kommentekben nincs kiegészítés.
 - **Tag = node:** nincs külön tag vagy csoport; az ember, a jegy, a meeting is node, `type` mezővel.
 - **Típus:** embert csak a `@Név` hoz létre, jegyet a `#1234`; ezeknél a típus kézzel nem állítható (a szerver
   a kézi „emberré tételt” elutasítja, a téves embert viszont vissza lehet állítani). Kézzel csak Meeting és Téma
   választható; a „Megnyitás meetingként” a típus nélküli node-ot magától Meetingre állítja.
+- **Parancs:** a bejegyzés első sorában `/meeting cím` vagy `/téma` (`/tema`) `cím` -> az adott típusú elem
+  „cím ÉÉÉÉ-HH-NN” névvel (a rögzítés napja), a további sorok a szövegébe. Oda kerül, ahová írtuk; a nyitott
+  meetinghez nem kapcsolódik. Szerkesztéskor is hat, ha a node-nak még nincs típusa. Ismeretlen parancs sima
+  szöveg. A szerver ismeri fel; a felület a mező alatt előre mutatja, mi lesz belőle.
 - **Egy közös térkép**, munkaterületek nélkül. A node és a kapcsolat mindig közös.
 - **Nincs nyitó node:** a szülő nélküli node legfelső szintű (pl. egy-egy meeting), felfelé nem kapcsolódik.
   A kezdőlap a legfelső szintű node-ok listája, a legújabb elöl, ember és jegy nélkül.
@@ -65,7 +71,7 @@ Hátravan, ebben a sorrendben:
 6. Jelentésjavaslatok kulcsszavakból: a dátum határidő vagy távollét (`node_dates.meaning`), és a szerepek.
    Javaslat, egy kattintással javítható; cserélhető értelmezővel, hogy később nyelvi modell is lehessen.
 7. Napló nézet (az egy tranzakcióból eredő sorok a `tx_id` alapján összevonhatók)
-8. Rendezés húzással
+8. Rendezés húzással (az áthelyezés kész: bejegyzést másikra húzva alá kerül; a sorrend kézi állítása nincs)
 9. Két hét valódi használat, a hét kérdéssel mérve
 
 ## Parancsok
