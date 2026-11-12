@@ -122,6 +122,16 @@ h3 {
   text-underline-offset: 2px;
 }
 
+.link.icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+}
+
+.link.icon:hover {
+  color: var(--error);
+}
+
 .hint {
   color: var(--muted);
   font-size: 0.85rem;

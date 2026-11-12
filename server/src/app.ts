@@ -6,6 +6,7 @@ import { login, logout, SESSION_COOKIE, SESSION_DAYS, userForToken, type User } 
 import type { Db } from './db.js';
 import {
   createNode,
+  deleteNode,
   ensureInbox,
   getNeighborhood,
   HttpError,
@@ -116,6 +117,10 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
   });
 
   // A kezdőpont: a Bejövő node.
+  app.delete<{ Params: { id: string }; Querystring: { version?: string } }>('/api/nodes/:id', async (req) =>
+    deleteNode(db, req.user.id, req.params.id, Number(req.query.version)),
+  );
+
   app.get('/api/home', async (req) => ({ id: await ensureInbox(db, req.user.id) }));
 
   app.get<{ Params: { id: string } }>('/api/nodes/:id', async (req) => getNeighborhood(db, req.params.id));

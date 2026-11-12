@@ -252,6 +252,39 @@ export function updateNode(db: Db, userId: string, id: string, input: UpdateNode
   });
 }
 
+/**
+ * Törölhető az a node, amelynek egyetlen kapcsolata a szülője felé mutat, és nincs (élő) kommentje.
+ * SQL-kifejezés az `n` aliasú node-ra.
+ */
+const DELETABLE = `(NOT n.is_inbox
+  AND (SELECT count(*) FROM edges e WHERE n.id IN (e.source_id, e.target_id)) = 1
+  AND EXISTS (SELECT 1 FROM edges e WHERE e.target_id = n.id AND e.kind IN ('unsorted', 'belongs_to'))
+  AND NOT EXISTS (SELECT 1 FROM notes c WHERE c.node_id = n.id AND c.deleted_at IS NULL))`;
+
+/** Végleges törlés: a sor és a kapcsolata eltűnik, visszaállítás nincs; a napló „remove” bejegyzést kap. */
+export function deleteNode(db: Db, userId: string, id: string, version: unknown) {
+  if (!Number.isInteger(version)) throw new HttpError(400, 'A verzió kötelező');
+  return withUser(db, userId, async (tx) => {
+    const { rows } = await tx.query(
+      `SELECT n.version, n.type, ${DELETABLE} AS deletable,
+         (SELECT e.source_id FROM edges e WHERE e.target_id = n.id LIMIT 1) AS parent_id
+       FROM nodes n WHERE n.id = $1 AND n.deleted_at IS NULL FOR UPDATE`,
+      [id],
+    );
+    const node = rows[0];
+    if (!node) throw new HttpError(404, 'A node nem található');
+    if (node.version !== version) throw new HttpError(409, 'A node közben megváltozott');
+    if (!node.deletable) {
+      throw new HttpError(409, 'Csak az a node törölhető, amelynek csak a szülője felé van kapcsolata, és nincs kommentje');
+    }
+    await tx.query('DELETE FROM notes WHERE node_id = $1', [id]); // a már törölt kommentek
+    await tx.query('DELETE FROM edges WHERE target_id = $1', [id]);
+    await tx.query('DELETE FROM nodes WHERE id = $1', [id]); // a dátumok vele mennek (ON DELETE CASCADE)
+    if (node.type === 'person') await reindexAll(tx, userId); // pl. a „Peti” újra egyértelmű lehet
+    return { parentId: node.parent_id as string };
+  });
+}
+
 // ---------- olvasás ----------
 
 const brief = (r: NodeRow) => ({ id: r.id, content: r.content, type: r.type, ticket_no: r.ticket_no, is_inbox: r.is_inbox });
@@ -342,6 +375,10 @@ export async function getNeighborhood(db: Db, id: string) {
     `SELECT ${NOTE_COLS} FROM notes WHERE node_id = ANY($1::uuid[]) AND deleted_at IS NULL ORDER BY created_at`,
     [[id, ...belowIds]],
   );
+  const deletable = await db.query(`SELECT n.id FROM nodes n WHERE n.id = ANY($1::uuid[]) AND ${DELETABLE}`, [
+    [id, ...belowIds],
+  ]);
+  const deletableIds = new Set(deletable.rows.map((r) => r.id));
 
   const datesOf = (nodeId: string) =>
     dates.rows.filter((d) => d.node_id === nodeId).map(({ node_id: _omit, ...d }) => d);
@@ -353,6 +390,7 @@ export async function getNeighborhood(db: Db, id: string) {
     spans: spansOf(r, ctx),
     dates: datesOf(r.id),
     notes: (notes.rows as NoteRow[]).filter((n) => n.node_id === r.id).map((n) => noteWithSpans(n, ctx)),
+    deletable: deletableIds.has(r.id),
   });
 
   return {

@@ -49,6 +49,8 @@ export interface Detailed extends Brief {
   spans: Span[];
   dates: NodeDate[];
   notes: Note[];
+  /** Csak a szülője felé van kapcsolata, és nincs kommentje: végleg törölhető. */
+  deletable: boolean;
 }
 
 export interface Entry extends Detailed {
@@ -111,6 +113,8 @@ export const api = {
   updateNote: (id: string, version: number, content: string) =>
     call<{ note: Note }>('PATCH', `/api/notes/${id}`, { version, content }),
   deleteNote: (id: string, version: number) => call('DELETE', `/api/notes/${id}?version=${version}`),
+  deleteNode: (id: string, version: number) =>
+    call<{ parentId: string }>('DELETE', `/api/nodes/${id}?version=${version}`),
 };
 
 /** A node rövid neve: a szöveg első sora. */

@@ -246,6 +246,15 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
               onChanged={() => reload(view.center.id)}
               onError={fail}
               onPick={go}
+              onDeleted={(parentId) => {
+                // A törölt node kikerül az útvonalból, a szülője áll középre.
+                const parent = view.parents.find((p) => p.id === parentId);
+                setPath((p) => {
+                  const rest = p.filter((c) => c.id !== view.center.id);
+                  if (!parent || rest.at(-1)?.id === parentId) return rest;
+                  return [...rest, { id: parent.id, title: title(parent) }];
+                });
+              }}
               nodes={[...view.connected, ...view.parents]}
             />
             <Capture inputRef={captureRef} onSave={capture} onError={fail} target={title(view.center)} />
@@ -285,6 +294,31 @@ function Chips({ nodes, onPick, counts }: { nodes: (Brief & { mentions?: number 
         </li>
       ))}
     </ul>
+  );
+}
+
+/** Kuka ikon: megerősítés után végleges törlés. Csak a törölhető node-on jelenik meg. */
+function DeleteButton(props: {
+  node: Detailed;
+  onDeleted: (parentId: string) => void;
+  onError: (err: unknown) => Promise<void>;
+}) {
+  const { node } = props;
+  const remove = async () => {
+    if (!window.confirm(`Végleg törlöd ezt a node-ot?\n\n„${title(node)}”\n\nVisszaállítani nem lehet.`)) return;
+    try {
+      const { parentId } = await api.deleteNode(node.id, node.version);
+      props.onDeleted(parentId);
+    } catch (err) {
+      await props.onError(err);
+    }
+  };
+  return (
+    <button className="link icon" onClick={() => void remove()} title="Végleges törlés" aria-label="Törlés">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6" />
+      </svg>
+    </button>
   );
 }
 
@@ -394,6 +428,7 @@ function Center(props: {
   onChanged: () => Promise<void>;
   onError: (e: unknown) => void;
   onPick: (n: Brief) => void;
+  onDeleted: (parentId: string) => void;
 }) {
   const { node, onChanged, onError } = props;
   const [editing, setEditing] = useState(false);
@@ -504,6 +539,16 @@ function Center(props: {
           <button className="link" onClick={() => setCommenting(true)}>
             Komment
           </button>
+        )}
+        {node.deletable && (
+          <DeleteButton
+            node={node}
+            onDeleted={(parentId) => props.onDeleted(parentId)}
+            onError={async (err) => {
+              onError(err);
+              await onChanged();
+            }}
+          />
         )}
       </div>
       <Notes
@@ -630,6 +675,16 @@ function EntryRow({ entry, known, onPick, onChanged, onError }: { entry: Entry; 
           <button className="link" onClick={() => setEditing(true)}>
             Szerkesztés
           </button>
+        )}
+        {entry.deletable && (
+          <DeleteButton
+            node={entry}
+            onDeleted={() => void onChanged()}
+            onError={async (err) => {
+              onError(err);
+              await onChanged();
+            }}
+          />
         )}
         <button className="link" onClick={() => onPick(entry)} title="Középre állítás">
           Megnyitás
