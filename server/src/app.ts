@@ -1,5 +1,6 @@
 import cookie from '@fastify/cookie';
 import rateLimit from '@fastify/rate-limit';
+import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { login, logout, SESSION_COOKIE, SESSION_DAYS, userForToken, type User } from './auth.js';
 import type { Db } from './db.js';
@@ -30,6 +31,8 @@ export interface AppOptions {
   /** HTTPS mögött true: a süti csak titkosított kapcsolaton megy. */
   secureCookies?: boolean;
   loginAttemptsPerMinute?: number;
+  /** A lefordított felület mappája (web/dist); ha nincs megadva, csak az API él. */
+  webDir?: string;
 }
 
 export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
@@ -119,6 +122,20 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
   app.get<{ Querystring: { q?: string } }>('/api/search', async (req) => ({
     results: await searchNodes(db, typeof req.query.q === 'string' ? req.query.q : ''),
   }));
+
+  if (opts.webDir) {
+    await app.register(fastifyStatic, { root: opts.webDir });
+  }
+  app.setNotFoundHandler((req, reply) => {
+    if (req.url.startsWith('/api/')) return reply.code(404).send({ error: 'Nincs ilyen API-végpont' });
+    if (!opts.webDir) {
+      return reply
+        .code(404)
+        .type('text/plain; charset=utf-8')
+        .send('A felület még nincs lefordítva. Futtasd: npm run build, majd indítsd újra a szervert.');
+    }
+    return reply.sendFile('index.html');
+  });
 
   return app;
 }

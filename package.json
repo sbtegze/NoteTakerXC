@@ -1,11 +1,18 @@
 {
   "name": "notetakerxc",
   "private": true,
-  "workspaces": ["server"],
+  "workspaces": [
+    "server",
+    "web"
+  ],
   "scripts": {
+    "build": "npm run build -w web",
+    "start": "npm run start -w server",
+    "dev:server": "npm run dev -w server",
+    "dev:web": "npm run dev -w web",
     "migrate": "npm run migrate -w server",
     "create-user": "npm run create-user -w server",
-    "dev:server": "npm run dev -w server",
-    "test": "npm test -w server"
+    "test": "npm test -w server",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w web"
   }
 }
