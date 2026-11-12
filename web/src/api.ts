@@ -69,6 +69,9 @@ export interface View {
   ancestors: (Brief & { parent_ids: string[] })[];
   below: Entry[];
   connected: Connected[];
+  /** Többszintű nézetben a bejegyzések alatti szintek node-jai és kapcsolatai. */
+  deeper: Detailed[];
+  deeper_edges: { parent_id: string; child_id: string }[];
 }
 
 export class ApiError extends Error {
@@ -102,7 +105,8 @@ export const api = {
   login: (email: string, password: string) => call<{ user: User }>('POST', '/api/login', { email, password }),
   logout: () => call('POST', '/api/logout', {}),
   roots: () => call<{ roots: (Brief & { created_at: string })[] }>('GET', '/api/roots'),
-  view: (id: string) => call<View>('GET', `/api/nodes/${id}`),
+  /** depth: a bejegyzések alatti további szintek száma (többszintű nézet). */
+  view: (id: string, depth = 0) => call<View>('GET', `/api/nodes/${id}${depth ? `?melyseg=${depth}` : ''}`),
   search: (q: string) => call<{ results: Brief[] }>('GET', `/api/search?q=${encodeURIComponent(q)}`),
   create: (input: { content: string; parentId?: string; contextId?: string }) =>
     call<{ node: Detailed }>('POST', '/api/nodes', input),

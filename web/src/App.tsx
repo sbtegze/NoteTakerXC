@@ -34,8 +34,11 @@ function save(storage: () => Storage, key: string, value: unknown) {
 }
 
 // Az URL a középen álló node-ot adja meg (/n/<azonosító>); az útvonalat a böngésző előzményei őrzik,
-// így a vissza/előre gomb és az újratöltés is ugyanoda visz.
-const urlFor = (path: Crumb[]) => (path.length ? `/n/${path.at(-1)!.id}` : '/');
+// így a vissza/előre gomb és az újratöltés is ugyanoda visz. A ?nezet=fa a többszintű bejegyzéslista.
+const urlFor = (path: Crumb[], tree: boolean) => (path.length ? `/n/${path.at(-1)!.id}` : '/') + (tree ? '?nezet=fa' : '');
+const treeFromUrl = () => new URLSearchParams(location.search).get('nezet') === 'fa';
+/** Többszintű nézetben ennyi szint látszik a bejegyzések alatt. */
+const TREE_DEPTH = 2;
 const idFromUrl = () => /^\/n\/([^/]+)$/.exec(location.pathname)?.[1];
 function pathFromHistory(): Crumb[] {
   const id = idFromUrl();
@@ -44,11 +47,19 @@ function pathFromHistory(): Crumb[] {
   return id ? [{ id, title: '' }] : []; // a nevet a betöltés pótolja
 }
 
-const fmtDay = (iso: string) =>
-  new Date(`${iso}T00:00:00`).toLocaleDateString('hu-HU', { month: 'short', day: 'numeric', weekday: 'short' });
+/** A szövegből felismert nap: ÉÉÉÉ-HH-NN, nnn (pl. 2026-11-12, csü). */
+const fmtDay = (iso: string) => `${iso}, ${WEEKDAY3[new Date(`${iso}T00:00:00`).getDay()]}`;
 const fmtRange = (from: string, to: string) => (from === to ? fmtDay(from) : `${fmtDay(from)} – ${fmtDay(to)}`);
-const fmtStamp = (iso: string) =>
-  new Date(iso).toLocaleString('hu-HU', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+/** Időpont: ÉÉÉÉ-HH-NN, nnn, óó:pp (pl. 2026-11-12, csü, 09:30), helyi idő szerint. */
+const WEEKDAY3 = ['vas', 'hét', 'ked', 'sze', 'csü', 'pén', 'szo'];
+const pad2 = (n: number) => String(n).padStart(2, '0');
+const fmtStamp = (iso: string) => {
+  const d = new Date(iso);
+  return (
+    `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}, ` +
+    `${WEEKDAY3[d.getDay()]}, ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+  );
+};
 
 export function App() {
   const [user, setUser] = useState<User | null | undefined>(undefined);
@@ -109,6 +120,7 @@ function Login({ onLogin }: { onLogin: (u: User) => void }) {
 
 function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [path, setPath] = useState<Crumb[]>(pathFromHistory);
+  const [tree, setTree] = useState(treeFromUrl);
   const [view, setView] = useState<View | null>(null);
   const [error, setError] = useState('');
   const [context, setContext] = useState<Crumb | null>(() => load(() => localStorage, 'context', null));
@@ -119,13 +131,16 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
 
   // Az aktuális előzménybejegyzés mindig a friss útvonalat tárolja (pl. átnevezés vagy törölt node után).
   useEffect(() => {
-    history.replaceState({ path }, '', urlFor(path));
+    history.replaceState({ path }, '', urlFor(path, tree));
     const name = path.at(-1)?.title;
     document.title = name ? `${name} – NoteTakerXC` : 'NoteTakerXC';
-  }, [path]);
+  }, [path, tree]);
 
   useEffect(() => {
-    const onPop = () => setPath(pathFromHistory());
+    const onPop = () => {
+      setPath(pathFromHistory());
+      setTree(treeFromUrl());
+    };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
   }, []);
@@ -144,16 +159,23 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
       if (node.id === path.at(-1)?.id) return;
       const at = path.findIndex((c) => c.id === node.id);
       const next = at >= 0 ? path.slice(0, at + 1) : [...path, { id: node.id, title: title(node) }];
-      history.pushState({ path: next }, '', urlFor(next));
+      history.pushState({ path: next }, '', urlFor(next, tree));
       setPath(next);
     },
-    [path],
+    [path, tree],
   );
+
+  /** Egy- vagy többszintű bejegyzéslista; új előzménybejegyzés, így a vissza gomb is visszavált. */
+  const setTreeView = (next: boolean) => {
+    if (next === tree) return;
+    history.pushState({ path }, '', urlFor(path, next));
+    setTree(next);
+  };
 
   const reload = useCallback(
     async (id: string) => {
       try {
-        const next = await api.view(id);
+        const next = await api.view(id, tree ? TREE_DEPTH : 0);
         setView(next);
         setError('');
         // Átnevezés után az útvonalon is az új név álljon.
@@ -163,7 +185,7 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
         else fail(err);
       }
     },
-    [fail],
+    [fail, tree],
   );
 
   useEffect(() => {
@@ -172,7 +194,7 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
 
   const goHome = () => {
     if (!path.length) return;
-    history.pushState({ path: [] }, '', '/');
+    history.pushState({ path: [] }, '', urlFor([], tree));
     setPath([]);
   };
 
@@ -262,7 +284,14 @@ function Workspace({ user, onLogout }: { user: User; onLogout: () => void }) {
               nodes={[...view.connected, ...view.parents]}
             />
             <Capture inputRef={captureRef} onSave={capture} onError={fail} target={title(view.center)} />
-            <Below view={view} onPick={go} onChanged={() => reload(view.center.id)} onError={fail} />
+            <Below
+              view={view}
+              tree={tree}
+              onTree={setTreeView}
+              onPick={go}
+              onChanged={() => reload(view.center.id)}
+              onError={fail}
+            />
           </section>
 
           <aside className="side">
@@ -516,6 +545,9 @@ function Center(props: {
 
   return (
     <article className={`center type-${node.type ?? 'none'}`}>
+      <time className="stamp" dateTime={node.created_at}>
+        {fmtStamp(node.created_at)}
+      </time>
       {editing ? (
         <Editor initial={node.content} onSave={(content) => update({ content })} onCancel={() => setEditing(false)} />
       ) : (
@@ -533,15 +565,6 @@ function Center(props: {
             </p>
           )}
         </>
-      )}
-      {node.dates.length > 0 && (
-        <p className="dates">
-          {node.dates.map((d, i) => (
-            <span key={i} className="span date">
-              {fmtRange(d.starts_on, d.ends_on)}
-            </span>
-          ))}
-        </p>
       )}
       <div className="row meta">
         <label>
@@ -664,11 +687,41 @@ function Capture(props: {
   );
 }
 
-function Below({ view, onPick, onChanged, onError }: { view: View; onPick: (n: Brief) => void; onChanged: () => Promise<void>; onError: (e: unknown) => void }) {
+function Below(props: {
+  view: View;
+  tree: boolean;
+  onTree: (tree: boolean) => void;
+  onPick: (n: Brief) => void;
+  onChanged: () => Promise<void>;
+  onError: (e: unknown) => void;
+}) {
+  const { view, tree, onPick, onChanged, onError } = props;
   // A típusos gyerekek (ember, jegy, meeting, téma) elemek; a többi bejegyzés.
   const items = view.below.filter((n) => n.is_child && n.type);
-  const entries = view.below.filter((n) => !(n.is_child && n.type)).reverse(); // a legfrissebb elöl
-  const known = [...view.connected, ...view.parents, ...view.below, view.center];
+  const top = view.below.filter((n) => !(n.is_child && n.type));
+  const known = [...view.connected, ...view.parents, ...view.below, ...view.deeper, view.center];
+
+  // Egyszintű: a legfrissebb elöl. Többszintű: időrendben, mindegyik alatt a saját albejegyzései,
+  // szintenként kicsit beljebb; a kör nem pörög körbe.
+  const rows: { entry: Entry; depth: number }[] = [];
+  if (!tree) {
+    for (const e of [...top].reverse()) rows.push({ entry: e, depth: 0 });
+  } else {
+    const byId = new Map(view.deeper.map((d) => [d.id, d]));
+    const childrenOf = (id: string) =>
+      view.deeper_edges
+        .filter((e) => e.parent_id === id)
+        .flatMap((e) => byId.get(e.child_id) ?? [])
+        .sort((a, b) => a.created_at.localeCompare(b.created_at));
+    const walk = (entry: Entry, depth: number, seen: Set<string>) => {
+      rows.push({ entry, depth });
+      if (depth >= TREE_DEPTH) return;
+      for (const c of childrenOf(entry.id)) {
+        if (!seen.has(c.id)) walk({ ...c, is_child: true, contexts: [] }, depth + 1, new Set([...seen, c.id]));
+      }
+    };
+    for (const e of top) walk(e, 0, new Set([view.center.id, e.id]));
+  }
 
   return (
     <>
@@ -681,13 +734,35 @@ function Below({ view, onPick, onChanged, onError }: { view: View; onPick: (n: B
         </section>
       )}
       <section className="entries">
-        <h2>
-          Bejegyzések <span className="count">{entries.length}</span>
-        </h2>
-        {entries.length === 0 && <p className="empty">Még nincs bejegyzés. Írj egyet a fenti mezőbe.</p>}
+        <div className="entries-head">
+          <h2>
+            Bejegyzések <span className="count">{top.length}</span>
+          </h2>
+          <span className="view-toggle" role="group" aria-label="Megjelenítés">
+            <button className={tree ? '' : 'on'} aria-pressed={!tree} title="Egyszintű, a legfrissebb elöl" onClick={() => props.onTree(false)}>
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+                <path d="M2 4h12M2 8h12M2 12h12" />
+              </svg>
+            </button>
+            <button className={tree ? 'on' : ''} aria-pressed={tree} title={`Többszintű, időrendben (+${TREE_DEPTH} szint)`} onClick={() => props.onTree(true)}>
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+                <path d="M2 3h12M5 8h9M8 13h6" />
+              </svg>
+            </button>
+          </span>
+        </div>
+        {top.length === 0 && <p className="empty">Még nincs bejegyzés. Írj egyet a fenti mezőbe.</p>}
         <ul>
-          {entries.map((e) => (
-            <EntryRow key={e.id} entry={e} known={known} onPick={onPick} onChanged={onChanged} onError={onError} />
+          {rows.map(({ entry, depth }, i) => (
+            <EntryRow
+              key={`${entry.id}-${i}`}
+              entry={entry}
+              depth={depth}
+              known={known}
+              onPick={onPick}
+              onChanged={onChanged}
+              onError={onError}
+            />
           ))}
         </ul>
       </section>
@@ -695,7 +770,7 @@ function Below({ view, onPick, onChanged, onError }: { view: View; onPick: (n: B
   );
 }
 
-function EntryRow({ entry, known, onPick, onChanged, onError }: { entry: Entry; known: Brief[]; onPick: (n: Brief) => void; onChanged: () => Promise<void>; onError: (e: unknown) => void }) {
+function EntryRow({ entry, depth = 0, known, onPick, onChanged, onError }: { entry: Entry; depth?: number; known: Brief[]; onPick: (n: Brief) => void; onChanged: () => Promise<void>; onError: (e: unknown) => void }) {
   const [editing, setEditing] = useState(false);
   const [commenting, setCommenting] = useState(false);
 
@@ -717,7 +792,11 @@ function EntryRow({ entry, known, onPick, onChanged, onError }: { entry: Entry; 
   };
 
   return (
-    <li className={editing ? 'entry' : 'entry clickable'} onClick={open}>
+    <li
+      className={editing ? 'entry' : 'entry clickable'}
+      style={depth ? { marginLeft: `${depth * 20}px` } : undefined}
+      onClick={open}
+    >
       <div className="entry-head">
         <time dateTime={entry.created_at}>{fmtStamp(entry.created_at)}</time>
         {entry.contexts.map((c) => (

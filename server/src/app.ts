@@ -123,7 +123,9 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
   // A kezdőlap: a legfelső szintű node-ok.
   app.get('/api/roots', async () => getRoots(db));
 
-  app.get<{ Params: { id: string } }>('/api/nodes/:id', async (req) => getNeighborhood(db, req.params.id));
+  app.get<{ Params: { id: string }; Querystring: { melyseg?: string } }>('/api/nodes/:id', async (req) =>
+    getNeighborhood(db, req.params.id, req.query.melyseg === undefined ? 0 : Number(req.query.melyseg)),
+  );
 
   app.post<{ Params: { id: string }; Body: { content?: unknown } }>('/api/nodes/:id/notes', async (req, reply) =>
     reply.code(201).send(await createNote(db, req.user.id, req.params.id, req.body?.content)),

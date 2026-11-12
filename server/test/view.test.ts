@@ -73,6 +73,22 @@ describe('középre állítás', () => {
     await db.query(`DELETE FROM edges WHERE source_id = $1 AND target_id = $2`, [sub.id, meeting.id]);
   });
 
+  it('kérésre a bejegyzések alatti szinteket is adja, legfeljebb a kért mélységig', async () => {
+    const entry = (await get(`/api/nodes/${meeting.id}`)).below.find((n: Brief) => n.content.startsWith('István jövő'));
+    const lvl1 = (await get(`/api/nodes/${entry.id}`)).below.find((n: Brief) => n.content === 'Al-bejegyzés');
+    const lvl2 = await create({ content: 'második szint', parentId: lvl1.id });
+    await create({ content: 'harmadik szint', parentId: lvl2.id });
+
+    expect((await get(`/api/nodes/${meeting.id}`)).deeper).toEqual([]);
+    const view = await get(`/api/nodes/${meeting.id}?melyseg=2`);
+    expect(titles(view.deeper)).toEqual(['Al-bejegyzés', 'második szint']);
+    expect(view.deeper[0].spans).toBeDefined();
+    const pairs = view.deeper_edges.map((e: { parent_id: string; child_id: string }) => [e.parent_id, e.child_id]);
+    expect(pairs).toEqual(expect.arrayContaining([[entry.id, lvl1.id], [lvl1.id, lvl2.id]]));
+    expect(pairs).toHaveLength(2);
+    expect((await app.inject({ url: `/api/nodes/${meeting.id}?melyseg=9`, cookies })).statusCode).toBe(400);
+  });
+
   it('a kezdőlapon a legfelső szintű node-ok, a legújabb elöl; ember és jegy nélkül', async () => {
     const later = await create({ content: 'ERP technikai státusz', type: 'meeting' });
     const { roots } = await get('/api/roots');

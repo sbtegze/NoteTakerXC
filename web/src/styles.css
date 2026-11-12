@@ -392,6 +392,13 @@ button:disabled {
   border-top-color: var(--topic);
 }
 
+.center .stamp {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+
 .center h1 {
   font-size: 1.45rem;
   line-height: 1.25;
@@ -403,13 +410,6 @@ button:disabled {
   margin: 8px 0 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-}
-
-.dates {
-  margin: 10px 0 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
 }
 
 .row {
@@ -589,6 +589,42 @@ button:disabled {
 }
 
 /* ---------- bejegyzések ---------- */
+
+.entries-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.entries-head h2 {
+  margin: 0;
+}
+
+.view-toggle {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.view-toggle button {
+  display: inline-flex;
+  align-items: center;
+  background: none;
+  border: none;
+  padding: 3px 7px;
+  color: var(--muted);
+}
+
+.view-toggle button + button {
+  border-left: 1px solid var(--line);
+}
+
+.view-toggle button.on {
+  background: var(--surface);
+  color: var(--accent);
+}
 
 .entries ul {
   list-style: none;

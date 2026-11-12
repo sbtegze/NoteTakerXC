@@ -316,8 +316,17 @@ export const noteWithSpans = (n: NoteRow, ctx: RecognitionContext) => ({
   spans: spansOf({ id: n.node_id, content: n.content, created_at: n.created_at }, ctx),
 });
 
-/** A középre állított node és minden, ami közvetlenül kapcsolódik hozzá. */
-export async function getNeighborhood(db: Db, id: string) {
+/** A bejegyzések alatt legfeljebb ennyi további szintet adunk vissza (többszintű nézet). */
+export const MAX_DEPTH = 2;
+
+/**
+ * A középre állított node és minden, ami közvetlenül kapcsolódik hozzá. A `depth` (0..MAX_DEPTH)
+ * a bejegyzések alatti további szintek száma: ezek a `deeper` node-ok és a `deeper_edges` kapcsolatok.
+ */
+export async function getNeighborhood(db: Db, id: string, depth = 0) {
+  if (!Number.isInteger(depth) || depth < 0 || depth > MAX_DEPTH) {
+    throw new HttpError(400, `A mélység 0 és ${MAX_DEPTH} között lehet`);
+  }
   const center = (await db.query(`SELECT ${NODE_COLS} FROM nodes WHERE id = $1 AND deleted_at IS NULL`, [id])).rows[0] as
     | NodeRow
     | undefined;
@@ -359,6 +368,30 @@ export async function getNeighborhood(db: Db, id: string) {
   );
   const belowIds = below.rows.map((r) => r.id);
 
+  // Többszintű nézet: a bejegyzések gyerekei, azok gyerekei … a kért mélységig.
+  const deeperEdges = depth
+    ? (
+        await db.query(
+          `WITH RECURSIVE down(parent_id, child_id, level) AS (
+             SELECT source_id, target_id, 1 FROM edges
+             WHERE source_id = ANY($1::uuid[]) AND kind IN ('unsorted', 'belongs_to')
+             UNION ALL
+             SELECT e.source_id, e.target_id, d.level + 1 FROM edges e JOIN down d ON e.source_id = d.child_id
+             WHERE e.kind IN ('unsorted', 'belongs_to') AND d.level < $2
+           )
+           SELECT DISTINCT d.parent_id, d.child_id FROM down d JOIN nodes c ON c.id = d.child_id
+           WHERE c.deleted_at IS NULL`,
+          [belowIds, depth],
+        )
+      ).rows
+    : [];
+  const deeperRows = (
+    await db.query(`SELECT ${NODE_COLS} FROM nodes WHERE id = ANY($1::uuid[]) ORDER BY created_at`, [
+      [...new Set(deeperEdges.map((e) => e.child_id))],
+    ])
+  ).rows as NodeRow[];
+  const shownIds = [id, ...belowIds, ...deeperRows.map((r) => r.id)];
+
   // Hol hangzott el: a bejegyzések többi szülője (pl. a meeting).
   const contexts = await db.query(
     `SELECT e.target_id, ${N_COLS} FROM edges e JOIN nodes n ON n.id = e.source_id
@@ -370,7 +403,7 @@ export async function getNeighborhood(db: Db, id: string) {
   const dates = await db.query(
     `SELECT node_id, starts_on, ends_on, meaning, source_text, confirmed FROM node_dates
      WHERE node_id = ANY($1::uuid[]) ORDER BY starts_on`,
-    [[id, ...belowIds]],
+    [shownIds],
   );
 
   // Kapcsolódik: akiket és amiket ugyanezek a bejegyzések (és maga a node) még említenek.
@@ -383,10 +416,10 @@ export async function getNeighborhood(db: Db, id: string) {
   );
   const notes = await db.query(
     `SELECT ${NOTE_COLS} FROM notes WHERE node_id = ANY($1::uuid[]) AND deleted_at IS NULL ORDER BY created_at`,
-    [[id, ...belowIds]],
+    [shownIds],
   );
   const deletable = await db.query(`SELECT n.id FROM nodes n WHERE n.id = ANY($1::uuid[]) AND ${DELETABLE}`, [
-    [id, ...belowIds],
+    shownIds,
   ]);
   const deletableIds = new Set(deletable.rows.map((r) => r.id));
 
@@ -413,6 +446,8 @@ export async function getNeighborhood(db: Db, id: string) {
       contexts: contexts.rows.filter((c) => c.target_id === r.id).map(brief),
     })),
     connected: connected.rows.map((r) => ({ ...brief(r), mentions: r.mentions as number, last_at: r.last_at as Date })),
+    deeper: deeperRows.map(detailed),
+    deeper_edges: deeperEdges.map((e) => ({ parent_id: e.parent_id as string, child_id: e.child_id as string })),
   };
 }
 
