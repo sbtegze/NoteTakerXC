@@ -64,7 +64,7 @@ Hátravan, ebben a sorrendben:
 
 ## Parancsok
 
-- `npm run up` vagy `start.cmd` – frissítés, telepítés, fordítás, indítás (http://localhost:3000)
+- `npm run up` vagy `start.cmd` – telepítés, fordítás, indítás (http://localhost:3000); `git pull` nincs benne
 - `npm test` – szervertesztek; a `TEST_DATABASE_URL` adatbázist minden futáskor törli és újraépíti
 - `npm run typecheck` – szerver és felület
 - `npm run dev:server`, `npm run dev:web` – fejlesztés közben (a felület a http://localhost:5173 címen)

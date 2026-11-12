@@ -7,7 +7,7 @@
   ],
   "scripts": {
     "up": "npm run update && npm start",
-    "update": "git pull origin main && npm install --no-audit --no-fund && npm run build",
+    "update": "npm install --no-audit --no-fund && npm run build",
     "build": "npm run build -w web",
     "start": "npm run start -w server",
     "dev:server": "npm run dev -w server",
