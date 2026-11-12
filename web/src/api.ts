@@ -32,12 +32,23 @@ export interface NodeDate {
   confirmed: boolean;
 }
 
+export interface Note {
+  id: string;
+  node_id: string;
+  content: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+  spans: Span[];
+}
+
 export interface Detailed extends Brief {
   version: number;
   aliases: string[];
   created_at: string;
   spans: Span[];
   dates: NodeDate[];
+  notes: Note[];
 }
 
 export interface Entry extends Detailed {
@@ -94,6 +105,10 @@ export const api = {
     call<{ node: Detailed }>('POST', '/api/nodes', input),
   update: (id: string, input: { version: number; content?: string; type?: NodeType | null; aliases?: string[] }) =>
     call<{ node: Detailed }>('PATCH', `/api/nodes/${id}`, input),
+  addNote: (nodeId: string, content: string) => call<{ note: Note }>('POST', `/api/nodes/${nodeId}/notes`, { content }),
+  updateNote: (id: string, version: number, content: string) =>
+    call<{ note: Note }>('PATCH', `/api/notes/${id}`, { version, content }),
+  deleteNote: (id: string, version: number) => call('DELETE', `/api/notes/${id}?version=${version}`),
 };
 
 /** A node rövid neve: a szöveg első sora. */

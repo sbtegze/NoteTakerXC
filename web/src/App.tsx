@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { api, ApiError, title, type Brief, type Detailed, type Entry, type NodeType, type User, type View } from './api';
+import { api, ApiError, title, type Brief, type Detailed, type Entry, type Note, type NodeType, type Span, type User, type View } from './api';
 
 interface Crumb {
   id: string;
@@ -262,7 +262,7 @@ function Chips({ nodes, onPick, counts }: { nodes: (Brief & { mentions?: number 
 }
 
 /** A szöveg a felismert részekkel: a jegy és a név kattintható, a dátum kiemelt. */
-function RichText({ node, onPick, nodes }: { node: Detailed; onPick: (n: Brief) => void; nodes: Brief[] }) {
+function RichText({ node, onPick, nodes }: { node: { content: string; spans: Span[] }; onPick: (n: Brief) => void; nodes: Brief[] }) {
   const parts: ReactNode[] = [];
   let at = 0;
   node.spans.forEach((s, i) => {
@@ -342,6 +342,7 @@ function Center(props: {
 }) {
   const { node, onChanged, onError } = props;
   const [editing, setEditing] = useState(false);
+  const [commenting, setCommenting] = useState(false);
   const [aliases, setAliases] = useState(node.aliases.join(', '));
 
   const update = async (input: Parameters<typeof api.update>[1] extends infer T ? Omit<T & object, 'version'> : never) => {
@@ -421,7 +422,22 @@ function Center(props: {
             {props.isContext ? 'Meeting lezárása' : 'Megnyitás meetingként'}
           </button>
         )}
+        {!commenting && !node.is_inbox && (
+          <button className="link" onClick={() => setCommenting(true)}>
+            Komment
+          </button>
+        )}
       </div>
+      <Notes
+        nodeId={node.id}
+        notes={node.notes}
+        known={props.nodes}
+        adding={commenting}
+        onAddDone={() => setCommenting(false)}
+        onPick={props.onPick}
+        onChanged={onChanged}
+        onError={onError}
+      />
     </article>
   );
 }
@@ -498,6 +514,7 @@ function Below({ view, onPick, onChanged, onError }: { view: View; onPick: (n: B
 
 function EntryRow({ entry, known, onPick, onChanged, onError }: { entry: Entry; known: Brief[]; onPick: (n: Brief) => void; onChanged: () => Promise<void>; onError: (e: unknown) => void }) {
   const [editing, setEditing] = useState(false);
+  const [commenting, setCommenting] = useState(false);
 
   const saveEdit = async (content: string) => {
     try {
@@ -519,6 +536,11 @@ function EntryRow({ entry, known, onPick, onChanged, onError }: { entry: Entry; 
           </button>
         ))}
         <span className="spacer" />
+        {!commenting && (
+          <button className="link" onClick={() => setCommenting(true)}>
+            Komment
+          </button>
+        )}
         {!editing && (
           <button className="link" onClick={() => setEditing(true)}>
             Szerkesztés
@@ -535,7 +557,97 @@ function EntryRow({ entry, known, onPick, onChanged, onError }: { entry: Entry; 
           <RichText node={entry} onPick={onPick} nodes={known} />
         </p>
       )}
+      <Notes
+        nodeId={entry.id}
+        notes={entry.notes}
+        known={known}
+        adding={commenting}
+        onAddDone={() => setCommenting(false)}
+        onPick={onPick}
+        onChanged={onChanged}
+        onError={onError}
+      />
     </li>
+  );
+}
+
+/** Egy node kommentjei. A felismert nevek és jegyek kiemeltek, de kapcsolatot nem hoznak létre. */
+function Notes(props: {
+  nodeId: string;
+  notes: Note[];
+  known: Brief[];
+  adding: boolean;
+  onAddDone: () => void;
+  onPick: (n: Brief) => void;
+  onChanged: () => Promise<void>;
+  onError: (e: unknown) => void;
+}) {
+  const { notes, onChanged, onError } = props;
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  /** Igazat ad, ha sikerült; hibánál a szerkesztő nyitva marad, a szöveg nem vész el. */
+  const run = async (action: () => Promise<unknown>) => {
+    let ok = true;
+    try {
+      await action();
+    } catch (err) {
+      ok = false;
+      onError(err instanceof ApiError && err.status === 409 ? new Error('Közben megváltozott, újratöltöttem. Próbáld újra.') : err);
+    }
+    await onChanged();
+    return ok;
+  };
+
+  if (!notes.length && !props.adding) return null;
+  return (
+    <div className="notes">
+      {notes.length > 0 && (
+        <ul>
+          {notes.map((n) => (
+            <li key={n.id} className="note">
+              {editingId === n.id ? (
+                <Editor
+                  initial={n.content}
+                  onSave={(content) => run(() => api.updateNote(n.id, n.version, content)).then((ok) => {
+                      if (ok) setEditingId(null);
+                    })}
+                  onCancel={() => setEditingId(null)}
+                />
+              ) : (
+                <>
+                  <p className="note-text">
+                    <RichText node={n} onPick={props.onPick} nodes={props.known} />
+                  </p>
+                  <div className="note-head">
+                    <time dateTime={n.created_at}>{fmtStamp(n.created_at)}</time>
+                    <button className="link" onClick={() => setEditingId(n.id)}>
+                      Szerkesztés
+                    </button>
+                    <button
+                      className="link"
+                      onClick={() => {
+                        if (window.confirm('Törlöd a kommentet?')) void run(() => api.deleteNote(n.id, n.version));
+                      }}
+                    >
+                      Törlés
+                    </button>
+                  </div>
+                </>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {props.adding && (
+        <Editor
+          initial=""
+          onSave={(content) => run(() => api.addNote(props.nodeId, content)).then((ok) => {
+              if (ok) props.onAddDone();
+            })}
+          onCancel={props.onAddDone}
+        />
+      )}
+    </div>
   );
 }
 

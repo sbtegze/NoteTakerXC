@@ -54,7 +54,7 @@ interface RecognitionContext {
   tickets: Map<number, string>;
 }
 
-async function loadContext(q: Queryable): Promise<RecognitionContext> {
+export async function loadContext(q: Queryable): Promise<RecognitionContext> {
   const people = await q.query(`SELECT id, content, aliases FROM nodes WHERE type = 'person' AND deleted_at IS NULL`);
   const tickets = await q.query('SELECT id, ticket_no FROM nodes WHERE ticket_no IS NOT NULL AND deleted_at IS NULL');
   return {
@@ -67,7 +67,7 @@ async function loadContext(q: Queryable): Promise<RecognitionContext> {
   };
 }
 
-function spansOf(node: Pick<NodeRow, 'id' | 'content' | 'created_at'>, ctx: RecognitionContext): LinkedSpan[] {
+export function spansOf(node: Pick<NodeRow, 'id' | 'content' | 'created_at'>, ctx: RecognitionContext): LinkedSpan[] {
   return recognize(node.content, {
     today: localDate(node.created_at), // a relatív dátumok a rögzítés napjához képest értendők
     people: ctx.people.filter((p) => p.id !== node.id),
@@ -161,7 +161,7 @@ export interface CreateNodeInput {
   aliases?: string[];
 }
 
-async function requireNode(tx: Queryable, id: string): Promise<void> {
+export async function requireNode(tx: Queryable, id: string): Promise<void> {
   const { rowCount } = await tx.query('SELECT 1 FROM nodes WHERE id = $1 AND deleted_at IS NULL', [id]);
   if (!rowCount) throw new HttpError(404, 'A node nem található');
 }
@@ -233,6 +233,23 @@ export function updateNode(db: Db, userId: string, id: string, input: UpdateNode
 
 const brief = (r: NodeRow) => ({ id: r.id, content: r.content, type: r.type, ticket_no: r.ticket_no, is_inbox: r.is_inbox });
 
+export interface NoteRow {
+  id: string;
+  node_id: string;
+  content: string;
+  version: number;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export const NOTE_COLS = 'id, node_id, content, version, created_at, updated_at';
+
+/** A komment a kiemelendő szövegrészekkel; a node önmagát nem említi, ezért a node azonosítójával ismerjük fel. */
+export const noteWithSpans = (n: NoteRow, ctx: RecognitionContext) => ({
+  ...n,
+  spans: spansOf({ id: n.node_id, content: n.content, created_at: n.created_at }, ctx),
+});
+
 /** A középre állított node és minden, ami közvetlenül kapcsolódik hozzá. */
 export async function getNeighborhood(db: Db, id: string) {
   const center = (await db.query(`SELECT ${NODE_COLS} FROM nodes WHERE id = $1 AND deleted_at IS NULL`, [id])).rows[0] as
@@ -283,6 +300,10 @@ export async function getNeighborhood(db: Db, id: string) {
      GROUP BY n.id ORDER BY last_at DESC`,
     [[id, ...belowIds], id],
   );
+  const notes = await db.query(
+    `SELECT ${NOTE_COLS} FROM notes WHERE node_id = ANY($1::uuid[]) AND deleted_at IS NULL ORDER BY created_at`,
+    [[id, ...belowIds]],
+  );
 
   const datesOf = (nodeId: string) =>
     dates.rows.filter((d) => d.node_id === nodeId).map(({ node_id: _omit, ...d }) => d);
@@ -293,6 +314,7 @@ export async function getNeighborhood(db: Db, id: string) {
     created_at: r.created_at,
     spans: spansOf(r, ctx),
     dates: datesOf(r.id),
+    notes: (notes.rows as NoteRow[]).filter((n) => n.node_id === r.id).map((n) => noteWithSpans(n, ctx)),
   });
 
   return {

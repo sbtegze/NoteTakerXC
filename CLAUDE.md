@@ -40,10 +40,11 @@ Kész:
 1. Projektváz, séma, bejelentkezés
 2. Rögzítés és felismerés (jegyszám, név, dátum)
 3. Felület: középre állítás, útvonal, keresés, rögzítés, szerkesztés, típus és becenév, nyitott meeting
+4. Kommentek a node-okon: a középen álló node-on és minden bejegyzésen; írás, szerkesztés, törlés
+   (`deleted_at`). A felismert név, jegy, dátum kiemelt és kattintható, de kapcsolat nem jön létre.
 
 Hátravan, ebben a sorrendben:
 
-4. Kommentek a node-okon (a tábla megvan, API és felület nincs)
 5. Fejlesztő- és csapatnézet szerep szerinti csoportokkal: Most, Következő, Várunk rá, Kész (`edges.role`)
 6. Jelentésjavaslatok kulcsszavakból: a dátum határidő vagy távollét (`node_dates.meaning`), és a szerepek.
    Javaslat, egy kattintással javítható; cserélhető értelmezővel, hogy később nyelvi modell is lehessen.

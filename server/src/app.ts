@@ -13,6 +13,7 @@ import {
   updateNode,
   type CreateNodeInput,
 } from './nodes.js';
+import { createNote, deleteNote, updateNote } from './notes.js';
 
 function optionalString(value: unknown, name: string): string | undefined {
   if (value === undefined || value === null) return undefined;
@@ -118,6 +119,18 @@ export async function buildApp(opts: AppOptions): Promise<FastifyInstance> {
   app.get('/api/home', async (req) => ({ id: await ensureInbox(db, req.user.id) }));
 
   app.get<{ Params: { id: string } }>('/api/nodes/:id', async (req) => getNeighborhood(db, req.params.id));
+
+  app.post<{ Params: { id: string }; Body: { content?: unknown } }>('/api/nodes/:id/notes', async (req, reply) =>
+    reply.code(201).send(await createNote(db, req.user.id, req.params.id, req.body?.content)),
+  );
+
+  app.patch<{ Params: { id: string }; Body: { content?: unknown; version?: unknown } }>('/api/notes/:id', async (req) =>
+    updateNote(db, req.user.id, req.params.id, req.body?.content, req.body?.version),
+  );
+
+  app.delete<{ Params: { id: string }; Querystring: { version?: string } }>('/api/notes/:id', async (req) =>
+    deleteNote(db, req.user.id, req.params.id, Number(req.query.version)),
+  );
 
   app.get<{ Querystring: { q?: string } }>('/api/search', async (req) => ({
     results: await searchNodes(db, typeof req.query.q === 'string' ? req.query.q : ''),
